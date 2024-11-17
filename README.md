@@ -39,11 +39,11 @@ This custom component integrates the Qingping Pro Air Quality Monitor [CGS1/CGS2
 5. Search for "Qingping Pro AQM" and follow the configuration steps
 
 ## Configuration
-<img src="https://github.com/user-attachments/assets/b27d218e-e815-4e64-b342-a44b1287d9a1" alt="Device Discovery" width="250" align="left">
+<img src="https://github.com/user-attachments/assets/3cc92957-3460-4ba4-b78f-17afab455f40" alt="Device Discovery" width="250" align="left">
 The integration supports automatic discovery of Qingping CGS1/CGS2 devices.
 <br />If your device is not discovered automatically, you can add it manually by providing the MAC address. 
 <br />⚠️ Do not include : in your MAC address. example: 532D38701E1F
-<br /><br /><br /><br /><br /><br /><br /><br />
+<br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br />
 
 
 ## How it Works
@@ -51,7 +51,7 @@ The integration supports automatic discovery of Qingping CGS1/CGS2 devices.
 
 1. **Device Discovery**: The integration uses MQTT to discover Qingping CGS1/CGS2 devices on your network. It listens for messages on the MQTT topic `qingping/#` to identify available devices.
 
-2. **Configuration**: Once a device is discovered, you can add it to your Home Assistant instance through the UI. The integration will prompt you to enter a name for the device and confirm its MAC address.
+2. **Configuration**: Once a device is discovered, you can add it to your Home Assistant instance through the UI. The integration will prompt you to enter a name and model for the device and confirm its MAC address.
 
 3. **Sensors**: The integration creates several sensors for each Qingping CGS1/CGS2 device:
    - Temperature
@@ -73,8 +73,8 @@ The integration supports automatic discovery of Qingping CGS1/CGS2 devices.
    - mg/m³ = ppb/1000 * 0.0409 * 111.1 (concentration (ppm) x 0.0409 x molecular weight)<br />
    
    **eTVOC Sensor**: The sensor can be set to 3 different measurement units, by default it is VOC index. The component converts from voc index to get ppb and mg/m³.
-   - ppb = index * 10
-   - mg/m³ = index * 0.0001
+   - ppb = (index * 5) + 35
+   - mg/m³ = (index * 0.023) + 0.124
       
 5. **Data Updates**: The component subscribes to MQTT messages from the device. When new data is received, it updates the relevant sensors in Home Assistant.
 

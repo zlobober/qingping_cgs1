@@ -1,4 +1,4 @@
-"""Config flow for Qingping CGS1 integration."""
+"""Config flow for Qingping CGSx integration."""
 from __future__ import annotations
 
 import voluptuous as vol
@@ -7,18 +7,18 @@ from typing import Any
 import asyncio
 
 from homeassistant import config_entries
-from homeassistant.const import CONF_MAC, CONF_NAME
+from homeassistant.const import CONF_MAC, CONF_NAME, CONF_MODEL
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.components import mqtt
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN, MQTT_TOPIC_PREFIX
+from .const import DOMAIN, MQTT_TOPIC_PREFIX, QP_MODELS, DEFAULT_MODEL
 
 _LOGGER = logging.getLogger(__name__)
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Qingping CGS1."""
+    """Handle a config flow for Qingping CGSx."""
 
     VERSION = 1
 
@@ -48,6 +48,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data_schema = vol.Schema({
                     vol.Required(CONF_MAC): vol.In(self._discovered_devices),
                     vol.Required(CONF_NAME): str,
+                    vol.Required(CONF_MODEL): vol.In(QP_MODELS),
                 })
 
                 return self.async_show_form(
@@ -61,14 +62,26 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(mac)
             self._abort_if_unique_id_configured()
 
+            validated_data = {
+                CONF_MAC: mac,
+                CONF_NAME: user_input[CONF_NAME],
+                CONF_MODEL: user_input.get(CONF_MODEL, DEFAULT_MODEL),  # Get the model or use default
+            }
+
             # Create the config entry
-            return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+            _LOGGER.debug("Creating entry with data: %s", validated_data)
+            return self.async_create_entry(title=validated_data[CONF_NAME], data=validated_data)
 
         except Exception as ex:
-            _LOGGER.error("Unexpected exception in Qingping CGS1 config flow: %s", ex)
+            _LOGGER.error("Unexpected exception in Qingping CGSx config flow: %s", ex)
             errors["base"] = "unknown"
             return self.async_show_form(
                 step_id="user",
+                 data_schema=vol.Schema({
+                    vol.Required(CONF_MAC): vol.In(self._discovered_devices),
+                    vol.Required(CONF_NAME): str,
+                    vol.Required(CONF_MODEL): vol.In(QP_MODELS),
+                }),
                 errors=errors,
             )
 
@@ -97,6 +110,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data_schema=vol.Schema({
                     vol.Required(CONF_NAME): str,
                     vol.Required(CONF_MAC): str,
+                    vol.Required(CONF_MODEL): vol.In(QP_MODELS),
                 }),
             )
 
@@ -105,7 +119,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(mac)
             self._abort_if_unique_id_configured()
 
-            return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+            validated_data = {
+                CONF_MAC: mac,
+                CONF_NAME: user_input[CONF_NAME],
+                CONF_MODEL: user_input.get(CONF_MODEL, DEFAULT_MODEL),  # Get the model or use default
+            }
+
+            _LOGGER.debug("Creating manual entry with data: %s", validated_data)
+            return self.async_create_entry(title=validated_data[CONF_NAME], data=validated_data)
         except Exception as ex:
             _LOGGER.warning("Unexpected exception in manual config: %s", ex)
             errors["base"] = "Device already configured, try a different mac address."
@@ -114,12 +135,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data_schema=vol.Schema({
                     vol.Required(CONF_NAME): str,
                     vol.Required(CONF_MAC): str,
+                    vol.Required(CONF_MODEL): vol.In(QP_MODELS),
                 }),
                 errors=errors,
             )
 
     async def _async_discover_devices(self):
-        """Discover available Qingping CGS1 devices via MQTT."""
+        """Discover available Qingping CGSx devices via MQTT."""
         try:
             # Get list of already configured devices
             configured_devices = {
@@ -132,7 +154,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     # Extract MAC address from the topic
                     mac = msg.topic.split('/')[-2]
                     if mac and mac not in configured_devices and mac not in self._discovered_devices:
-                        self._discovered_devices[mac] = f"Qingping CGS1 ({mac})"
+                        self._discovered_devices[mac] = f"Qingping CGSx ({mac})"
                 except Exception as ex:
                     _LOGGER.error("Error handling MQTT message: %s", ex)
 
@@ -144,10 +166,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Wait for a short time to collect messages
             await asyncio.sleep(10)  # Increased to 10 seconds for better discovery
 
-            _LOGGER.info(f"Discovered {len(self._discovered_devices)} new Qingping CGS1 devices")
+            _LOGGER.info(f"Discovered {len(self._discovered_devices)} new Qingping CGSx devices")
 
         except HomeAssistantError as ex:
-            _LOGGER.error("Error discovering Qingping CGS1 devices: %s", ex)
+            _LOGGER.error("Error discovering Qingping CGSx devices: %s", ex)
         except Exception as ex:
             _LOGGER.error("Unexpected error in device discovery: %s", ex)
 
@@ -156,26 +178,42 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry):
         """Get the options flow for this handler."""
         return OptionsFlowHandler(config_entry)
-
+    
 class OptionsFlowHandler(config_entries.OptionsFlow):
     """Handle options flow for Qingping CGS1."""
 
-    def __init__(self, config_entry):
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
         self.config_entry = config_entry
 
-    async def async_step_init(self, user_input=None):
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Manage the options."""
-        return await self.async_step_user()
-
-    async def async_step_user(self, user_input=None):
-        """Handle a flow initialized by the user."""
         if user_input is not None:
+            # Update the config entry
+            new_data = {
+                **self.config_entry.data,
+                CONF_MODEL: user_input[CONF_MODEL]
+            }
+            
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data=new_data,
+            )
+            
+            # Reload the integration to apply changes
+            await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+            
             return self.async_create_entry(title="", data=user_input)
 
         return self.async_show_form(
-            step_id="user",
+            step_id="init",
             data_schema=vol.Schema({
-                # Add any configurable options here
+                vol.Required(
+                    CONF_MODEL,
+                    default=self.config_entry.data.get(CONF_MODEL, DEFAULT_MODEL)
+                ): vol.In(QP_MODELS),
             }),
         )
+		

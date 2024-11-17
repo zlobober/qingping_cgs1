@@ -3,14 +3,13 @@ from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME, CONF_MAC
+from homeassistant.const import CONF_NAME, CONF_MAC, CONF_MODEL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity import EntityCategory
 
-from .const import DOMAIN, CONF_TVOC_UNIT, CONF_ETVOC_UNIT, MODEL_CGS2, SENSOR_NOISE, MODEL_CGS1
-
+from .const import DOMAIN, CONF_TVOC_UNIT, CONF_ETVOC_UNIT
 
 TVOC_UNIT_OPTIONS = ["ppb", "ppm", "mg/m³"]
 ETVOC_UNIT_OPTIONS = ["index", "ppb", "mg/m³"]
@@ -23,9 +22,8 @@ async def async_setup_entry(
     """Set up Qingping CGSx select entities from a config entry."""
     mac = config_entry.data[CONF_MAC]
     name = config_entry.data[CONF_NAME]
+    model = config_entry.data[CONF_MODEL]
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
-
-    model = MODEL_CGS2 if SENSOR_NOISE in coordinator.data else MODEL_CGS1
 
     device_info = {
         "identifiers": {(DOMAIN, mac)},
@@ -34,7 +32,7 @@ async def async_setup_entry(
         "model": model,
     }
 
-    if model == MODEL_CGS1:
+    if model == "CGS1":
         async_add_entities([
             QingpingCGSxTVOCUnitSelect(coordinator, config_entry, mac, name, device_info, CONF_TVOC_UNIT, TVOC_UNIT_OPTIONS),
         ])
@@ -53,7 +51,7 @@ class QingpingCGSxTVOCUnitSelect(CoordinatorEntity, SelectEntity):
         self._mac = mac
         self._conf_unit = conf_unit
         self._unit_options = unit_options
-        self._attr_name = f"{name} {'ETVOC' if conf_unit == CONF_ETVOC_UNIT else 'TVOC'} Unit"
+        self._attr_name = f"{name} {'eTVOC' if conf_unit == CONF_ETVOC_UNIT else 'TVOC'} Unit"
         self._attr_unique_id = f"{mac}_{conf_unit}"
         self._attr_device_info = device_info
         self._attr_options = unit_options
@@ -83,6 +81,6 @@ class QingpingCGSxTVOCUnitSelect(CoordinatorEntity, SelectEntity):
 
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if self._conf_unit not in self.coordinator.data:
+        if CONF_TVOC_UNIT not in self.coordinator.data:
             self.coordinator.data[self._conf_unit] = self._config_entry.data.get(self._conf_unit, self._unit_options[0])
         self.async_write_ha_state()

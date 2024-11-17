@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_NAME, CONF_MAC
+from homeassistant.const import CONF_NAME, CONF_MAC, CONF_MODEL
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity import EntityCategory
 
-from .const import DOMAIN, CONF_TEMPERATURE_OFFSET, CONF_HUMIDITY_OFFSET, DEFAULT_OFFSET, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, MODEL_CGS2, SENSOR_NOISE, MODEL_CGS1
+from .const import DOMAIN, CONF_TEMPERATURE_OFFSET, CONF_HUMIDITY_OFFSET, DEFAULT_OFFSET, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -19,11 +19,9 @@ async def async_setup_entry(
     """Set up Qingping CGSx number inputs from a config entry."""
     mac = config_entry.data[CONF_MAC]
     name = config_entry.data[CONF_NAME]
+    model = config_entry.data[CONF_MODEL]
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     native_temp_unit = hass.config.units.temperature_unit
-
-    # Determine the model based on the presence of the noise sensor
-    model = MODEL_CGS2 if SENSOR_NOISE in coordinator.data else MODEL_CGS1
 
     device_info = {
         "identifiers": {(DOMAIN, mac)},

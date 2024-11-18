@@ -2,23 +2,35 @@
     "config": {
         "step": {
             "user": {
-                "description": "Set up your Qingping CGS1 device",
+                "description": "Set up your Qingping CGSx device",
                 "title": "Qingping Pro AQM",
                 "data": {
                     "name": "Device Name",
-                    "mac": "MAC Address"
+                    "mac": "MAC Address",
+                    "model": "Select Gen1 or Gen2"
                 }
             },
             "no_devices": {
                 "description": "Click submit to add device manually",
-                "title": "Qingping CGS1 device not found"
+                "title": "Qingping CGSx device not found"
             },
             "manual": {
-                "description": "Set up your Qingping CGS1 device",
+                "description": "Set up your Qingping CGSx device",
                 "title": "Qingping Pro AQM",
                 "data": {
                     "name": "Device Name",
-                    "mac": "MAC Address"
+                    "mac": "MAC Address",
+                    "model": "Select Gen1 or Gen2"
+                }
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "description": "Select Qingping Pro AQM Model",
+                "data": {
+                    "model": "Gen1 or Gen2"
                 }
             }
         }

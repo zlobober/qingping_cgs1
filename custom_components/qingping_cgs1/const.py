@@ -1,8 +1,9 @@
-"""Constants for the Qingping CGS1 integration."""
+"""Constants for the Qingping CGSx integration."""
 
 DOMAIN = "qingping_cgs1"
 CONF_MAC = "mac"
 CONF_NAME = "name"
+CONF_MODEL = "model"
 
 # Sensor types
 SENSOR_BATTERY = "battery"
@@ -12,13 +13,17 @@ SENSOR_PM10 = "pm10"
 SENSOR_PM25 = "pm25"
 SENSOR_TEMPERATURE = "temperature"
 SENSOR_TVOC = "tvoc"
+SENSOR_ETVOC = "tvoc_index"
+SENSOR_NOISE = "noise"
 
 # Unit of measurement
 PERCENTAGE = "%"
 PPM = "ppm"
 CONCENTRATION = "µg/m³"
 PPB = "ppb"
+DB = "dB"
 CONF_TVOC_UNIT = "tvoc_unit"
+CONF_ETVOC_UNIT = "etvoc_unit"
 
 # Offsets
 CONF_TEMPERATURE_OFFSET = "temperature_offset"
@@ -39,3 +44,6 @@ ATTR_DURATION = "duration"
 
 DEFAULT_TYPE = "12"
 DEFAULT_DURATION = "86400"
+
+QP_MODELS = ["CGS1", "CGS2"]
+DEFAULT_MODEL = "CGS1"

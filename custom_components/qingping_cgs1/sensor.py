@@ -300,7 +300,12 @@ class QingpingCGSxBatteryStateSensor(CoordinatorEntity, SensorEntity):
     @callback
     def update_battery_state(self, status):
         """Update the battery state."""
-        self._attr_native_value = "Charging" if status == 1 else "Discharging"
+        if status == 1:
+            self._attr_native_value = "Charging"
+        elif status == 2:
+            self._attr_native_value = "Fully Charged"
+        else:
+            self._attr_native_value = "Discharging"
         self.async_write_ha_state()
 
 class QingpingCGSxTypeSensor(CoordinatorEntity, SensorEntity):

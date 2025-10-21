@@ -332,6 +332,8 @@ class QingpingCGSxTypeSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_info = device_info
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_native_value = None
+        self._attr_force_update = False
+        self._attr_entity_registry_enabled_default = False
 
     @callback
     def update_type(self, device_type):

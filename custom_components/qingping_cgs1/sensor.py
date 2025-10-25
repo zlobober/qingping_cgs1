@@ -146,13 +146,24 @@ async def async_setup_entry(
                             if battery_charging is not None:
                                 sensor.update_battery_state(battery_charging)
                         elif sensor._sensor_type in data:
-                            value = data[sensor._sensor_type]
-                            if isinstance(value, dict):
-                                value = value.get("value")
-                            if value is not None:
-                                sensor.update_from_latest_data(value)
-                                if sensor._sensor_type == SENSOR_BATTERY and battery_charging is not None:
-                                    sensor.update_battery_charging(battery_charging)
+                            sensor_data = data[sensor._sensor_type]
+                            if isinstance(sensor_data, dict):
+                                value = sensor_data.get("value")
+                                status = sensor_data.get("status")
+                                # Check if PM sensor is disabled (status=3, value=99999)
+                                if sensor._sensor_type in [SENSOR_PM10, SENSOR_PM25] and status == 3 and value == 99999:
+                                    sensor.set_unavailable()
+                                elif value is not None:
+                                    sensor.update_from_latest_data(value)
+                                    if sensor._sensor_type == SENSOR_BATTERY and battery_charging is not None:
+                                        sensor.update_battery_charging(battery_charging)
+                            else:
+                                # Handle non-dict values (backward compatibility)
+                                value = sensor_data
+                                if value is not None:
+                                    sensor.update_from_latest_data(value)
+                                    if sensor._sensor_type == SENSOR_BATTERY and battery_charging is not None:
+                                        sensor.update_battery_charging(battery_charging)
             else:
                 _LOGGER.info("sensorData is type 17")
                 return
@@ -321,6 +332,8 @@ class QingpingCGSxTypeSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_info = device_info
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_native_value = None
+        self._attr_force_update = False
+        self._attr_entity_registry_enabled_default = False
 
     @callback
     def update_type(self, device_type):
@@ -396,6 +409,12 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
             self._battery_charging = is_charging
             self.async_write_ha_state()
 
+    @callback
+    def set_unavailable(self):
+        """Set sensor as unavailable."""
+        self._attr_native_value = None
+        self.async_write_ha_state()
+
     @property
     def icon(self):
         """Return the icon of the sensor."""
@@ -457,7 +476,13 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
         """Return True if entity is available."""
         sensors = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id, {}).get("sensors", [])
         status_sensor = next((sensor for sensor in sensors if isinstance(sensor, QingpingCGSxStatusSensor)), None)
-        return status_sensor.native_value == "online" if status_sensor else False
+        is_online = status_sensor.native_value == "online" if status_sensor else False
+        
+        # For PM sensors, also check if they are disabled
+        if self._sensor_type in [SENSOR_PM10, SENSOR_PM25]:
+            return is_online and self._attr_native_value is not None
+        
+        return is_online
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""

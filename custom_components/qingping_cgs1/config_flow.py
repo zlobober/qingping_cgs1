@@ -17,6 +17,10 @@ from .const import DOMAIN, MQTT_TOPIC_PREFIX, QP_MODELS, DEFAULT_MODEL
 
 _LOGGER = logging.getLogger(__name__)
 
+def clean_mac_address(mac: str) -> str:
+    """Remove colons from MAC address if present."""
+    return mac.replace(":", "")
+
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Qingping CGSx."""
 
@@ -58,7 +62,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
 
             # Validate the input
-            mac = user_input[CONF_MAC]
+            mac = clean_mac_address(user_input[CONF_MAC])
             await self.async_set_unique_id(mac)
             self._abort_if_unique_id_configured()
 
@@ -115,7 +119,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         try:
-            mac = user_input[CONF_MAC]
+            mac = clean_mac_address(user_input[CONF_MAC])
             await self.async_set_unique_id(mac)
             self._abort_if_unique_id_configured()
 
@@ -152,7 +156,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 """Handle received MQTT messages."""
                 try:
                     # Extract MAC address from the topic
-                    mac = msg.topic.split('/')[-2]
+                    mac = clean_mac_address(msg.topic.split('/')[-2])
                     if mac and mac not in configured_devices and mac not in self._discovered_devices:
                         self._discovered_devices[mac] = f"Qingping CGSx ({mac})"
                 except Exception as ex:

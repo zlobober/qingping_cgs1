@@ -36,10 +36,11 @@ async def async_setup_entry(
         async_add_entities([
             QingpingCGSxTVOCUnitSelect(coordinator, config_entry, mac, name, device_info, CONF_TVOC_UNIT, TVOC_UNIT_OPTIONS),
         ])
-    else:  # CGS2
+    elif model == "CGS2":
         async_add_entities([
             QingpingCGSxTVOCUnitSelect(coordinator, config_entry, mac, name, device_info, CONF_ETVOC_UNIT, ETVOC_UNIT_OPTIONS),
         ])
+    # CGDN1 does not have TVOC sensor, so no select entity needed
 
 class QingpingCGSxTVOCUnitSelect(CoordinatorEntity, SelectEntity):
     """Representation of a Qingping CGSx TVOC unit select entity."""

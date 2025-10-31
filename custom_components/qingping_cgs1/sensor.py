@@ -89,9 +89,10 @@ async def async_setup_entry(
 
     if model == "CGS1":
         sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_TVOC, "TVOC", PPB, SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS, SensorStateClass.MEASUREMENT, device_info))
-    else:
+    elif model == "CGS2":
         sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_ETVOC, "eTVOC", None, SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS, SensorStateClass.MEASUREMENT, device_info))
         sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_NOISE, "Noise", DB, SensorDeviceClass.SOUND_PRESSURE, SensorStateClass.MEASUREMENT, device_info))
+    #CGDN1 has the same sensors as CGS1 (no TVOC, no Noise)
 
     async_add_entities(sensors)
 
@@ -150,8 +151,8 @@ async def async_setup_entry(
                             if isinstance(sensor_data, dict):
                                 value = sensor_data.get("value")
                                 status = sensor_data.get("status")
-                                # Check if PM sensor is disabled (status=3, value=99999)
-                                if sensor._sensor_type in [SENSOR_PM10, SENSOR_PM25] and status == 3 and value == 99999:
+                                # Check if PM sensor is disabled ( value=99999)
+                                if sensor._sensor_type in [SENSOR_PM10, SENSOR_PM25] and value == 99999:
                                     sensor.set_unavailable()
                                 elif value is not None:
                                     sensor.update_from_latest_data(value)

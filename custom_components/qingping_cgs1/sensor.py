@@ -1,4 +1,4 @@
-"""Support for Qingping CGSx sensors."""
+"""Support for Qingping CGxx sensors."""
 from __future__ import annotations
 
 import json
@@ -92,7 +92,7 @@ async def async_setup_entry(
     elif model == "CGS2":
         sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_ETVOC, "eTVOC", None, SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS, SensorStateClass.MEASUREMENT, device_info))
         sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_NOISE, "Noise", DB, SensorDeviceClass.SOUND_PRESSURE, SensorStateClass.MEASUREMENT, device_info))
-    #CGDN1 has the same sensors as CGS1 (no TVOC, no Noise)
+    # CGDN1 has the same sensors as CGS1 (no TVOC, no Noise)
 
     async_add_entities(sensors)
 
@@ -138,20 +138,24 @@ async def async_setup_entry(
                 #ignore type 17 sensor data                
                 for data in sensor_data:
                     battery_charging = None
+                    battery_status = None
                     if SENSOR_BATTERY in data:
                         battery_data = data[SENSOR_BATTERY]
                         if isinstance(battery_data, dict):
-                            battery_charging = battery_data.get("status") == 1
-                    for sensor in sensors[4:]:  # Skip status, firmware, mac and type sensors
-                        if isinstance(sensor, QingpingCGSxBatteryStateSensor):
-                            if battery_charging is not None:
-                                sensor.update_battery_state(battery_charging)
-                        elif sensor._sensor_type in data:
+                            battery_status = battery_data.get("status")
+                            battery_charging = battery_status == 1
+                    
+                    # Update battery state sensor first if we have status
+                    if battery_status is not None:
+                        battery_state.update_battery_state(battery_status)
+                    
+                    for sensor in sensors[5:]:  # Skip status, firmware, mac, type, and battery_state sensors
+                        if sensor._sensor_type in data:
                             sensor_data = data[sensor._sensor_type]
                             if isinstance(sensor_data, dict):
                                 value = sensor_data.get("value")
                                 status = sensor_data.get("status")
-                                # Check if PM sensor is disabled ( value=99999)
+                                # Check if PM sensor is disabled (value=99999)
                                 if sensor._sensor_type in [SENSOR_PM10, SENSOR_PM25] and value == 99999:
                                     sensor.set_unavailable()
                                 elif value is not None:
@@ -225,19 +229,22 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
         if self._attr_native_value != new_status:
             self._attr_native_value = new_status
             self.async_write_ha_state()
-            # Update other sensors' availability
-            sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
-            for sensor in sensors:
-                if isinstance(sensor, QingpingCGSxSensor):
-                    sensor.async_write_ha_state()
-            # Call publish_config when status changes from offline to online
-            if self._last_status == "offline" and new_status == "online":
-                asyncio.create_task(self._publish_config_on_status_change())
+            # Update other sensors' availability only if hass is available
+            if self.hass:
+                sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
+                for sensor in sensors:
+                    if isinstance(sensor, QingpingCGSxSensor):
+                        sensor.async_write_ha_state()
+                # Call publish_config when status changes from offline to online
+                if self._last_status == "offline" and new_status == "online":
+                    asyncio.create_task(self._publish_config_on_status_change())
             
             self._last_status = new_status
 
     async def _publish_config_on_status_change(self):
         """Publish config when status changes from offline to online."""
+        if not self.hass:
+            return
         sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
         for sensor in sensors:
             if isinstance(sensor, QingpingCGSxSensor):
@@ -475,6 +482,8 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
+        if not self.hass:
+            return False
         sensors = self.hass.data.get(DOMAIN, {}).get(self._config_entry.entry_id, {}).get("sensors", [])
         status_sensor = next((sensor for sensor in sensors if isinstance(sensor, QingpingCGSxStatusSensor)), None)
         is_online = status_sensor.native_value == "online" if status_sensor else False
@@ -491,7 +500,7 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up the timer when entity is removed."""
-        if self._config_entry.entry_id in self.hass.data.get(DOMAIN, {}):
+        if self.hass and self._config_entry.entry_id in self.hass.data.get(DOMAIN, {}):
             remove_timer = self.hass.data[DOMAIN][self._config_entry.entry_id].get("remove_timer")
             if remove_timer:
                 remove_timer()

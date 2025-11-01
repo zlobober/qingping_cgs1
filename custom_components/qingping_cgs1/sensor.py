@@ -1,4 +1,4 @@
-"""Support for Qingping CGxx sensors."""
+"""Support for Qingping CGSx sensors."""
 from __future__ import annotations
 
 import json
@@ -116,19 +116,23 @@ async def async_setup_entry(
 
             firmware_version = payload.get("version")
             if firmware_version is not None:
-                firmware_sensor.update_version(firmware_version)
+                if firmware_sensor.hass:
+                    firmware_sensor.update_version(firmware_version)
 
             device_type = payload.get("type")
             if device_type is not None:
-                type_sensor.update_type(device_type)
+                if type_sensor.hass:
+                    type_sensor.update_type(device_type)
 
             timestamp = payload.get("timestamp")
             if timestamp is not None:
-                status_sensor.update_timestamp(timestamp)
+                if status_sensor.hass:
+                    status_sensor.update_timestamp(timestamp)
 
             mac_address = payload.get("mac")
             if mac_address is not None:
-                mac_sensor.update_mac(mac_address)
+                if mac_sensor.hass:
+                    mac_sensor.update_mac(mac_address)
 
             sensor_data = payload.get("sensorData")
             if not isinstance(sensor_data, list) or not sensor_data:
@@ -146,17 +150,19 @@ async def async_setup_entry(
                             battery_charging = battery_status == 1
                     
                     # Update battery state sensor first if we have status
-                    if battery_status is not None:
+                    if battery_status is not None and battery_state.hass:
                         battery_state.update_battery_state(battery_status)
                     
                     for sensor in sensors[5:]:  # Skip status, firmware, mac, type, and battery_state sensors
+                        if not sensor.hass:
+                            continue
                         if sensor._sensor_type in data:
                             sensor_data = data[sensor._sensor_type]
                             if isinstance(sensor_data, dict):
                                 value = sensor_data.get("value")
                                 status = sensor_data.get("status")
-                                # Check if PM sensor is disabled (value=99999)
-                                if sensor._sensor_type in [SENSOR_PM10, SENSOR_PM25] and value == 99999:
+                                # Check if PM sensor is disabled (status=3, value=99999)
+                                if sensor._sensor_type in [SENSOR_PM10, SENSOR_PM25] and status == 3 and value == 99999:
                                     sensor.set_unavailable()
                                 elif value is not None:
                                     sensor.update_from_latest_data(value)
@@ -224,20 +230,22 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
     @callback
     def _update_status(self):
         """Update the status based on the last timestamp."""
+        if not self.hass:
+            return
+            
         current_time = int(time.time())
         new_status = "online" if current_time - self._last_timestamp <= OFFLINE_TIMEOUT else "offline"
         if self._attr_native_value != new_status:
             self._attr_native_value = new_status
             self.async_write_ha_state()
-            # Update other sensors' availability only if hass is available
-            if self.hass:
-                sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
-                for sensor in sensors:
-                    if isinstance(sensor, QingpingCGSxSensor):
-                        sensor.async_write_ha_state()
-                # Call publish_config when status changes from offline to online
-                if self._last_status == "offline" and new_status == "online":
-                    asyncio.create_task(self._publish_config_on_status_change())
+            # Update other sensors' availability
+            sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
+            for sensor in sensors:
+                if isinstance(sensor, QingpingCGSxSensor) and sensor.hass:
+                    sensor.async_write_ha_state()
+            # Call publish_config when status changes from offline to online
+            if self._last_status == "offline" and new_status == "online":
+                asyncio.create_task(self._publish_config_on_status_change())
             
             self._last_status = new_status
 
@@ -314,7 +322,7 @@ class QingpingCGSxBatteryStateSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{mac}_battery_state"
         self._attr_device_info = device_info
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_native_value = None
+        self._attr_native_value = "Discharging"
 
     @callback
     def update_battery_state(self, status):
@@ -365,6 +373,7 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
         self._attr_state_class = state_class
         self._attr_device_info = device_info
         self._battery_charging = False
+        self._is_unavailable = False
 
     @callback
     def update_from_latest_data(self, value):
@@ -406,6 +415,7 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
                 self._attr_native_unit_of_measurement = tvoc_unit
             else:
                 self._attr_native_value = int(value)
+            self._is_unavailable = False
             self.async_write_ha_state()
         except ValueError:
             _LOGGER.error("Invalid value received for %s: %s", self._sensor_type, value)
@@ -420,6 +430,7 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
     @callback
     def set_unavailable(self):
         """Set sensor as unavailable."""
+        self._is_unavailable = True
         self._attr_native_value = None
         self.async_write_ha_state()
 
@@ -490,7 +501,7 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
         
         # For PM sensors, also check if they are disabled
         if self._sensor_type in [SENSOR_PM10, SENSOR_PM25]:
-            return is_online and self._attr_native_value is not None
+            return is_online and not self._is_unavailable
         
         return is_online
 

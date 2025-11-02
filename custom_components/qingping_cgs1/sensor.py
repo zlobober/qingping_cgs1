@@ -161,8 +161,8 @@ async def async_setup_entry(
                             if isinstance(sensor_data, dict):
                                 value = sensor_data.get("value")
                                 status = sensor_data.get("status")
-                                # Check if PM sensor is disabled (status=3, value=99999)
-                                if sensor._sensor_type in [SENSOR_PM10, SENSOR_PM25] and status == 3 and value == 99999:
+                                # Check if PM sensor is disabled (value=99999)
+                                if sensor._sensor_type in [SENSOR_PM10, SENSOR_PM25] and value == 99999:
                                     sensor.set_unavailable()
                                 elif value is not None:
                                     sensor.update_from_latest_data(value)

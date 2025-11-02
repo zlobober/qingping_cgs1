@@ -110,9 +110,19 @@ async def async_setup_entry(
                 _LOGGER.error("Payload is not a dictionary")
                 return
 
-            if payload.get("mac") != mac:
-                _LOGGER.debug("Received message for a different device")
+            received_mac = payload.get("mac", "").replace(":", "").upper()
+            expected_mac = mac.replace(":", "").upper()
+            
+            if received_mac != expected_mac:
+                _LOGGER.debug("Received message for a different device. Expected: %s, Got: %s", expected_mac, received_mac)
                 return
+            
+            _LOGGER.debug("Processing MQTT message for device %s", mac)
+            
+            # Update timestamp first - any message from device means it's online
+            current_timestamp = int(time.time())
+            if status_sensor.hass:
+                status_sensor.update_timestamp(payload.get("timestamp", current_timestamp))
 
             firmware_version = payload.get("version")
             if firmware_version is not None:
@@ -124,11 +134,6 @@ async def async_setup_entry(
                 if type_sensor.hass:
                     type_sensor.update_type(device_type)
 
-            timestamp = payload.get("timestamp")
-            if timestamp is not None:
-                if status_sensor.hass:
-                    status_sensor.update_timestamp(timestamp)
-
             mac_address = payload.get("mac")
             if mac_address is not None:
                 if mac_sensor.hass:
@@ -136,7 +141,8 @@ async def async_setup_entry(
 
             sensor_data = payload.get("sensorData")
             if not isinstance(sensor_data, list) or not sensor_data:
-                _LOGGER.error("sensorData is not a non-empty list")
+                _LOGGER.debug("No valid sensorData in payload, possibly a config response or device just powered on")
+                # Device is online, just waiting for sensor data
                 return
             if len(sensor_data) == 1:
                 #ignore type 17 sensor data                
@@ -199,11 +205,15 @@ async def async_setup_entry(
         hass, publish_config_wrapper, timedelta(seconds=int(DEFAULT_DURATION))
     )
 
-    # Publish config immediately upon setup
-    if await ensure_mqtt_connected(hass):
-        await publish_config_wrapper()
-    else:
-        _LOGGER.error("Failed to connect to MQTT for initial config publish")
+    # Publish config immediately upon setup with a delay to ensure entities are ready
+    async def delayed_publish():
+        await asyncio.sleep(2)  # Wait 2 seconds for entities to be fully added
+        if await ensure_mqtt_connected(hass):
+            await publish_config_wrapper()
+        else:
+            _LOGGER.error("Failed to connect to MQTT for initial config publish")
+    
+    asyncio.create_task(delayed_publish())
 
 class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Qingping CGSx status sensor."""

@@ -194,9 +194,35 @@ async def async_setup_entry(
         hass, f"{MQTT_TOPIC_PREFIX}/{mac}/up", message_received, 1
     )
 
+    # CGDN1-specific: Subscribe to any message for this device to detect when it comes online
+    # CGDN1 doesn't always send full sensor data on power-on like CGS1/CGS2
+    if model == "CGDN1":
+        @callback
+        def device_alive_check(message):
+            """Detect any MQTT activity from CGDN1 device."""
+            try:
+                _LOGGER.debug("CGDN1 device activity detected on topic: %s", message.topic)
+                # Any MQTT activity from this device means it's alive
+                if status_sensor.hass:
+                    current_time = int(time.time())
+                    if status_sensor._last_timestamp == 0 or (current_time - status_sensor._last_timestamp) > 60:
+                        _LOGGER.info("CGDN1 device %s appears to be online, updating status", mac)
+                        status_sensor.update_timestamp(current_time)
+                        # Trigger a config publish to get fresh data
+                        asyncio.create_task(sensors[5].publish_config())
+            except Exception as e:
+                _LOGGER.error("Error in CGDN1 device alive check: %s", str(e))
+        
+        await mqtt.async_subscribe(
+            hass, f"{MQTT_TOPIC_PREFIX}/{mac}/#", device_alive_check, 1
+        )
+
     # Set up timer for periodic publishing
     async def publish_config_wrapper(*args):
         if await ensure_mqtt_connected(hass):
+            # Force status to online when we publish config
+            if status_sensor.hass:
+                status_sensor.update_timestamp(int(time.time()))
             await sensors[5].publish_config()
         else:
             _LOGGER.error("Failed to connect to MQTT for periodic config publish")
@@ -234,7 +260,10 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
     @callback
     def update_timestamp(self, timestamp):
         """Update the last received timestamp."""
+        old_timestamp = self._last_timestamp
         self._last_timestamp = int(timestamp)
+        if old_timestamp == 0 or self._attr_native_value == "offline":
+            _LOGGER.info("Device %s came online (timestamp: %s)", self._mac, timestamp)
         self._update_status()
 
     @callback
@@ -246,15 +275,20 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
         current_time = int(time.time())
         new_status = "online" if current_time - self._last_timestamp <= OFFLINE_TIMEOUT else "offline"
         if self._attr_native_value != new_status:
+            old_status = self._attr_native_value
             self._attr_native_value = new_status
             self.async_write_ha_state()
+            _LOGGER.info("Device %s status changed from %s to %s", self._mac, old_status, new_status)
+            
             # Update other sensors' availability
             sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
             for sensor in sensors:
                 if isinstance(sensor, QingpingCGSxSensor) and sensor.hass:
                     sensor.async_write_ha_state()
+            
             # Call publish_config when status changes from offline to online
             if self._last_status == "offline" and new_status == "online":
+                _LOGGER.info("Device %s recovered from offline, publishing config", self._mac)
                 asyncio.create_task(self._publish_config_on_status_change())
             
             self._last_status = new_status
@@ -272,6 +306,9 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
     async def async_added_to_hass(self):
         """Set up a timer to regularly update the status."""
         await super().async_added_to_hass()
+
+        # Immediately check if we should be online based on recent activity
+        self._update_status()
 
         async def update_status(*_):
             self._update_status()

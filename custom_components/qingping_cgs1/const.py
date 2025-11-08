@@ -47,3 +47,23 @@ DEFAULT_DURATION = "86400"
 
 QP_MODELS = ["CGS1", "CGS2", "CGDN1"]
 DEFAULT_MODEL = "CGS1"
+
+# Device-specific settings
+CONF_CO2_ASC = "co2_asc"
+CONF_CO2_OFFSET = "co2_offset"
+CONF_PM25_OFFSET = "pm25_offset"
+CONF_PM10_OFFSET = "pm10_offset"
+CONF_NOISE_OFFSET = "noise_offset"
+CONF_TVOC_OFFSET = "tvoc_offset"
+CONF_TVOC_INDEX_OFFSET = "tvoc_index_offset"
+
+# Default values for device settings
+DEFAULT_SENSOR_OFFSET = 0
+
+# CGDN1 specific settings
+CONF_POWER_OFF_TIME = "power_off_time"
+CONF_DISPLAY_OFF_TIME = "display_off_time"
+CONF_NIGHT_MODE_START_TIME = "night_mode_start_time"
+CONF_NIGHT_MODE_END_TIME = "night_mode_end_time"
+CONF_AUTO_SLIDING_TIME = "auto_slideing_time"
+CONF_SCREENSAVER_TYPE = "screensaver_type"

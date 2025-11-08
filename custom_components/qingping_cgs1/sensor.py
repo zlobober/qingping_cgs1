@@ -32,6 +32,10 @@ _LOGGER = logging.getLogger(__name__)
 OFFLINE_TIMEOUT = 300  # 5 minutes in seconds
 MQTT_PUBLISH_RETRY_LIMIT = 3
 MQTT_PUBLISH_RETRY_DELAY = 5  # seconds
+SETTING_CHANGE_DELAY = 5  # seconds delay before publishing setting changes
+
+# Store pending setting publishes to debounce rapid changes
+_pending_setting_publishes = {}
 
 async def ensure_mqtt_connected(hass):
     """Ensure MQTT is connected before publishing."""
@@ -40,6 +44,116 @@ async def ensure_mqtt_connected(hass):
             return True
         await asyncio.sleep(1)
     return False
+
+async def publish_setting_change(hass: HomeAssistant, mac: str, setting_key: str, value: any) -> None:
+    """Publish a single setting change to the device with debounce."""
+    # Cancel any pending publish for this setting
+    publish_key = f"{mac}_{setting_key}"
+    if publish_key in _pending_setting_publishes:
+        _pending_setting_publishes[publish_key].cancel()
+    
+    async def _delayed_publish():
+        """Publish after delay."""
+        try:
+            await asyncio.sleep(SETTING_CHANGE_DELAY)
+            
+            if not await ensure_mqtt_connected(hass):
+                _LOGGER.error("MQTT is not connected, cannot publish setting change")
+                return
+            
+            payload = {
+                "type": "17",
+                "setting": {
+                    setting_key: value
+                }
+            }
+            
+            topic = f"{MQTT_TOPIC_PREFIX}/{mac}/down"
+            await mqtt.async_publish(hass, topic, json.dumps(payload))
+            _LOGGER.info("Published setting change to %s: %s = %s", mac, setting_key, value)
+            
+        except Exception as err:
+            _LOGGER.error("Failed to publish setting change: %s", err)
+        finally:
+            # Clean up the pending publish
+            if publish_key in _pending_setting_publishes:
+                del _pending_setting_publishes[publish_key]
+    
+    # Schedule the delayed publish
+    task = asyncio.create_task(_delayed_publish())
+    _pending_setting_publishes[publish_key] = task
+
+async def _update_settings_from_device(hass: HomeAssistant, config_entry: ConfigEntry, settings: dict, model: str) -> None:
+    """Update Home Assistant entities when settings are changed on the device."""
+    _LOGGER.info("Starting _update_settings_from_device with settings: %s", settings)
+    
+    from .const import (
+        CONF_TEMPERATURE_OFFSET, CONF_HUMIDITY_OFFSET,
+        CONF_CO2_OFFSET, CONF_PM25_OFFSET, CONF_PM10_OFFSET,
+        CONF_NOISE_OFFSET, CONF_TVOC_OFFSET, CONF_TVOC_INDEX_OFFSET,
+        CONF_POWER_OFF_TIME, CONF_DISPLAY_OFF_TIME, CONF_NIGHT_MODE_START_TIME,
+        CONF_NIGHT_MODE_END_TIME, CONF_AUTO_SLIDING_TIME, CONF_SCREENSAVER_TYPE,
+        CONF_CO2_ASC
+    )
+    
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    updated = False
+    
+    # Map device settings to HA entity keys and conversion functions
+    setting_mappings = {
+        # Temperature offset: device sends value * 100, we need to divide by 100
+        "temperature_offset": (CONF_TEMPERATURE_OFFSET, lambda x: round(x / 100, 1)),
+        # Humidity offset: device sends value * 10, we need to divide by 10
+        "humidity_offset": (CONF_HUMIDITY_OFFSET, lambda x: round(x / 10, 1)),
+        # Other offsets: direct integer values
+        "co2_offset": (CONF_CO2_OFFSET, int),
+        "pm25_offset": (CONF_PM25_OFFSET, int),
+        "pm10_offset": (CONF_PM10_OFFSET, int),
+        "noise_offset": (CONF_NOISE_OFFSET, int),
+        "tvoc_offset": (CONF_TVOC_OFFSET, int),
+        "tvoc_index_offset": (CONF_TVOC_INDEX_OFFSET, int),
+        # CGDN1 specific settings
+        "power_off_time": (CONF_POWER_OFF_TIME, int),
+        "display_off_time": (CONF_DISPLAY_OFF_TIME, int),
+        "night_mode_start_time": (CONF_NIGHT_MODE_START_TIME, int),
+        "night_mode_end_time": (CONF_NIGHT_MODE_END_TIME, int),
+        "auto_slideing_time": (CONF_AUTO_SLIDING_TIME, int),
+        "screensaver_type": (CONF_SCREENSAVER_TYPE, int),
+        "co2_asc": (CONF_CO2_ASC, int),
+    }
+    
+    for device_key, value in settings.items():
+        _LOGGER.info("Processing setting: %s = %s", device_key, value)
+        if device_key in setting_mappings:
+            ha_key, converter = setting_mappings[device_key]
+            try:
+                converted_value = converter(value)
+                _LOGGER.info("Converted %s: %s -> %s", device_key, value, converted_value)
+                
+                # Update coordinator data
+                if coordinator.data.get(ha_key) != converted_value:
+                    coordinator.data[ha_key] = converted_value
+                    updated = True
+                    _LOGGER.info("Updated %s from device: %s", ha_key, converted_value)
+                    
+                    # Update config entry
+                    new_data = dict(config_entry.data)
+                    new_data[ha_key] = converted_value
+                    hass.config_entries.async_update_entry(config_entry, data=new_data)
+                else:
+                    _LOGGER.info("Setting %s already has value %s, no update needed", ha_key, converted_value)
+                    
+            except (ValueError, TypeError) as err:
+                _LOGGER.error("Failed to convert setting %s with value %s: %s", device_key, value, err)
+        else:
+            _LOGGER.warning("Unknown setting key from device: %s", device_key)
+    
+    # Refresh coordinator to update all entities
+    if updated:
+        _LOGGER.info("Settings updated, refreshing coordinator")
+        await coordinator.async_request_refresh()
+    else:
+        _LOGGER.info("No settings were updated")
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -133,11 +247,25 @@ async def async_setup_entry(
             if device_type is not None:
                 if type_sensor.hass:
                     type_sensor.update_type(device_type)
+                    
+            # Log all message types for debugging
+            message_type = payload.get("type")
+            _LOGGER.info("Received MQTT message type: %s", message_type)
 
             mac_address = payload.get("mac")
             if mac_address is not None:
                 if mac_sensor.hass:
                     mac_sensor.update_mac(mac_address)
+
+            # Handle type 28 messages (device settings update)
+            message_type = payload.get("type")
+            if message_type == 28 or message_type == "28":
+                _LOGGER.info("Received type 28 settings update from device")
+                settings = payload.get("setting", {})
+                _LOGGER.info("Settings in payload: %s", settings)
+                if settings:
+                    hass.async_create_task(_update_settings_from_device(hass, config_entry, settings, model))
+                return
 
             sensor_data = payload.get("sensorData")
             if not isinstance(sensor_data, list) or not sensor_data:
@@ -153,7 +281,8 @@ async def async_setup_entry(
                         battery_data = data[SENSOR_BATTERY]
                         if isinstance(battery_data, dict):
                             battery_status = battery_data.get("status")
-                            battery_charging = battery_status == 1
+                            if battery_status is not None:
+                                battery_charging = (battery_status == 1)  # Explicitly True or False
                     
                     # Update battery state sensor first if we have status
                     if battery_status is not None and battery_state.hass:
@@ -378,8 +507,10 @@ class QingpingCGSxBatteryStateSensor(CoordinatorEntity, SensorEntity):
             self._attr_native_value = "Charging"
         elif status == 2:
             self._attr_native_value = "Fully Charged"
-        else:
+        elif status == 0:
             self._attr_native_value = "Discharging"
+        else:
+            self._attr_native_value = "Unknown"
         self.async_write_ha_state()
 
 class QingpingCGSxTypeSensor(CoordinatorEntity, SensorEntity):
@@ -432,12 +563,12 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
                 if self._attr_native_unit_of_measurement == UnitOfTemperature.FAHRENHEIT:
                     # Convert to Fahrenheit
                     temp_fahrenheit = (temp_celsius * 9/5) + 32
-                    self._attr_native_value = round(float(temp_fahrenheit) + offset, 1)
+                    self._attr_native_value = round(float(temp_fahrenheit), 1)
                 else:
-                    self._attr_native_value = round(float(temp_celsius) + offset, 1)
+                    self._attr_native_value = round(float(temp_celsius), 1)
             elif self._sensor_type == SENSOR_HUMIDITY:
                 offset = self.coordinator.data.get(CONF_HUMIDITY_OFFSET, 0)
-                self._attr_native_value = round(float(value) + offset, 1)
+                self._attr_native_value = round(float(value), 1)
             elif self._sensor_type == SENSOR_ETVOC:
                 etvoc_unit = self.coordinator.data.get(CONF_ETVOC_UNIT, "index")
                 etvoc_value = int(value)
@@ -455,9 +586,10 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
                 if tvoc_unit == "ppm":
                     tvoc_value /= 1000
                 elif tvoc_unit == "mg/m³":
-                    tvoc_value /= 1000 
-                    tvoc_value *= 0.0409 
-                    tvoc_value *= 111.1  # Approximate conversion factor
+                    tvoc_value /= 218.77
+                    # tvoc_value /= 1000 
+                    # tvoc_value *= 0.0409 
+                    # tvoc_value *= 111.1  # Approximate conversion factor
                 self._attr_native_value = round(tvoc_value, 3)
                 self._attr_native_unit_of_measurement = tvoc_unit
             else:

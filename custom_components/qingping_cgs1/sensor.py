@@ -110,7 +110,7 @@ async def _update_settings_from_device(hass: HomeAssistant, config_entry: Config
         "pm25_offset": (CONF_PM25_OFFSET, int),
         "pm10_offset": (CONF_PM10_OFFSET, int),
         "noise_offset": (CONF_NOISE_OFFSET, int),
-        "tvoc_offset": (CONF_TVOC_OFFSET, int),
+        "tvoc_zoom": (CONF_TVOC_OFFSET, lambda x: round(x / 10, 1)),
         "tvoc_index_offset": (CONF_TVOC_INDEX_OFFSET, int),
         # CGDN1 specific settings
         "power_off_time": (CONF_POWER_OFF_TIME, int),
@@ -219,19 +219,31 @@ async def async_setup_entry(
     def message_received(message):
         """Handle new MQTT messages."""
         try:
+            _LOGGER.warning("=== MQTT MESSAGE RECEIVED === Topic: %s", message.topic)
+            
             payload = json.loads(message.payload)
+            _LOGGER.warning("Payload type: %s", type(payload))
+            
             if not isinstance(payload, dict):
                 _LOGGER.error("Payload is not a dictionary")
                 return
 
+            # Check message type first - type 28 (settings) messages don't include MAC
+            message_type = payload.get("type")
+            
+            # For messages with MAC, verify it matches
             received_mac = payload.get("mac", "").replace(":", "").upper()
             expected_mac = mac.replace(":", "").upper()
             
-            if received_mac != expected_mac:
+            _LOGGER.warning("Received MAC: %s, Expected MAC: %s, Type: %s", received_mac, expected_mac, message_type)
+            
+            # Skip MAC check for type 28 (settings) messages as they don't include MAC
+            # We're subscribed to this device's specific topic, so we know it's for us
+            if received_mac and received_mac != expected_mac:
                 _LOGGER.debug("Received message for a different device. Expected: %s, Got: %s", expected_mac, received_mac)
                 return
             
-            _LOGGER.debug("Processing MQTT message for device %s", mac)
+            _LOGGER.warning("Processing MQTT message for device %s", mac)
             
             # Update timestamp first - any message from device means it's online
             current_timestamp = int(time.time())
@@ -247,25 +259,26 @@ async def async_setup_entry(
             if device_type is not None:
                 if type_sensor.hass:
                     type_sensor.update_type(device_type)
-                    
-            # Log all message types for debugging
-            message_type = payload.get("type")
-            _LOGGER.info("Received MQTT message type: %s", message_type)
 
             mac_address = payload.get("mac")
             if mac_address is not None:
                 if mac_sensor.hass:
                     mac_sensor.update_mac(mac_address)
 
-            # Handle type 28 messages (device settings update)
-            message_type = payload.get("type")
+            # Handle type 28 messages (device settings update) - Check BEFORE sensorData
+            _LOGGER.warning("=== MESSAGE TYPE: %s ===", message_type)
+            
             if message_type == 28 or message_type == "28":
-                _LOGGER.info("Received type 28 settings update from device")
+                _LOGGER.error("!!! TYPE 28 SETTINGS UPDATE DETECTED !!!")
+                _LOGGER.error("Full payload: %s", json.dumps(payload, indent=2))
                 settings = payload.get("setting", {})
-                _LOGGER.info("Settings in payload: %s", settings)
+                _LOGGER.error("Settings extracted: %s", settings)
                 if settings:
+                    _LOGGER.error("!!! CREATING TASK TO UPDATE SETTINGS !!!")
                     hass.async_create_task(_update_settings_from_device(hass, config_entry, settings, model))
-                return
+                else:
+                    _LOGGER.error("!!! TYPE 28 HAS NO SETTINGS DICT !!!")
+                return  # Don't process as sensor data
 
             sensor_data = payload.get("sensorData")
             if not isinstance(sensor_data, list) or not sensor_data:
@@ -322,36 +335,41 @@ async def async_setup_entry(
     await mqtt.async_subscribe(
         hass, f"{MQTT_TOPIC_PREFIX}/{mac}/up", message_received, 1
     )
+    _LOGGER.warning("=== SUBSCRIBED TO: %s/%s/up ===", MQTT_TOPIC_PREFIX, mac)
 
-    # CGDN1-specific: Subscribe to any message for this device to detect when it comes online
-    # CGDN1 doesn't always send full sensor data on power-on like CGS1/CGS2
-    if model == "CGDN1":
-        @callback
-        def device_alive_check(message):
-            """Detect any MQTT activity from CGDN1 device."""
-            try:
-                _LOGGER.debug("CGDN1 device activity detected on topic: %s", message.topic)
-                # Any MQTT activity from this device means it's alive
-                if status_sensor.hass:
-                    current_time = int(time.time())
-                    if status_sensor._last_timestamp == 0 or (current_time - status_sensor._last_timestamp) > 60:
-                        _LOGGER.info("CGDN1 device %s appears to be online, updating status", mac)
-                        status_sensor.update_timestamp(current_time)
-                        # Trigger a config publish to get fresh data
-                        asyncio.create_task(sensors[5].publish_config())
-            except Exception as e:
-                _LOGGER.error("Error in CGDN1 device alive check: %s", str(e))
-        
-        await mqtt.async_subscribe(
-            hass, f"{MQTT_TOPIC_PREFIX}/{mac}/#", device_alive_check, 1
-        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # Note: CGDN1 devices are handled the same as other models
+    # Status is determined solely by received MQTT messages, not by config publishes
 
     # Set up timer for periodic publishing
     async def publish_config_wrapper(*args):
         if await ensure_mqtt_connected(hass):
-            # Force status to online when we publish config
-            if status_sensor.hass:
-                status_sensor.update_timestamp(int(time.time()))
+            # Don't force status to online - let actual device messages determine status
             await sensors[5].publish_config()
         else:
             _LOGGER.error("Failed to connect to MQTT for periodic config publish")
@@ -426,6 +444,8 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
         """Publish config when status changes from offline to online."""
         if not self.hass:
             return
+        # Add a small delay to let the device fully come online
+        await asyncio.sleep(2)
         sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
         for sensor in sensors:
             if isinstance(sensor, QingpingCGSxSensor):

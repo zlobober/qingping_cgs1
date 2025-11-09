@@ -54,7 +54,7 @@ CONF_CO2_OFFSET = "co2_offset"
 CONF_PM25_OFFSET = "pm25_offset"
 CONF_PM10_OFFSET = "pm10_offset"
 CONF_NOISE_OFFSET = "noise_offset"
-CONF_TVOC_OFFSET = "tvoc_offset"
+CONF_TVOC_OFFSET = "tvoc_zoom"
 CONF_TVOC_INDEX_OFFSET = "tvoc_index_offset"
 
 # Default values for device settings

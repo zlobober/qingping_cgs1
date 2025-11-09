@@ -50,7 +50,7 @@ async def async_setup_entry(
     # Add model-specific entities
     if model == "CGS1":
         entities.append(
-            QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "TVOC Offset", CONF_TVOC_OFFSET, device_info, "ppb")
+            QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "TVOC Offset", CONF_TVOC_OFFSET, device_info, "%")
         )
     elif model == "CGS2":
         entities.extend([
@@ -59,8 +59,8 @@ async def async_setup_entry(
         ])
     elif model == "CGDN1":
         entities.extend([
-            QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Power Off Time", CONF_POWER_OFF_TIME, device_info, 0, 60, 1, 30, "minutes"),
-            QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Display Off Time", CONF_DISPLAY_OFF_TIME, device_info, 0, 300, 1, 30, "seconds"),
+            #QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Power Off Time", CONF_POWER_OFF_TIME, device_info, 0, 60, 1, 30, "minutes"),
+            #QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Display Off Time", CONF_DISPLAY_OFF_TIME, device_info, 0, 300, 1, 30, "seconds"),
             QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Auto Sliding Time", CONF_AUTO_SLIDING_TIME, device_info, 0, 180, 5, 30, "seconds"),
             QingpingCGSxScreensaverTypeNumber(coordinator, config_entry, mac, name, device_info),
         ])
@@ -110,6 +110,7 @@ class QingpingCGSxOffsetNumber(CoordinatorEntity, NumberEntity):
         
         # Publish setting change to device
         from .sensor import publish_setting_change
+        
         if self._offset_key == CONF_TEMPERATURE_OFFSET:
             if self._attr_native_unit_of_measurement == UnitOfTemperature.FAHRENHEIT:
                     # Convert to Fahrenheit
@@ -223,7 +224,11 @@ class QingpingCGSxSensorOffsetNumber(CoordinatorEntity, NumberEntity):
         
         # Publish setting change to device
         from .sensor import publish_setting_change
-        await publish_setting_change(self.hass, self._mac, self._offset_key, int(value))
+        if self._offset_key == CONF_TVOC_OFFSET:
+            device_value = int(value * 10)
+        else:
+            device_value = int(value)
+        await publish_setting_change(self.hass, self._mac, self._offset_key, device_value)
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""

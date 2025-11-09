@@ -246,9 +246,10 @@ async def async_setup_entry(
             _LOGGER.warning("Processing MQTT message for device %s", mac)
             
             # Update timestamp first - any message from device means it's online
+            # Always use current system time, not device's timestamp which may be unreliable
             current_timestamp = int(time.time())
             if status_sensor.hass:
-                status_sensor.update_timestamp(payload.get("timestamp", current_timestamp))
+                status_sensor.update_timestamp(current_timestamp)
 
             firmware_version = payload.get("version")
             if firmware_version is not None:
@@ -337,34 +338,32 @@ async def async_setup_entry(
     )
     _LOGGER.warning("=== SUBSCRIBED TO: %s/%s/up ===", MQTT_TOPIC_PREFIX, mac)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    # Note: CGDN1 devices are handled the same as other models
-    # Status is determined solely by received MQTT messages, not by config publishes
+    # CGDN1-specific: Subscribe to any message for this device to detect when it comes online
+    # CGDN1 doesn't always send full sensor data on power-on like CGS1/CGS2
+    if model == "CGDN1":
+        @callback
+        def device_alive_check(message):
+            """Detect any MQTT activity from CGDN1 device."""
+            try:
+                # Skip the main /up topic as it's already handled
+                if message.topic.endswith("/up"):
+                    return
+                    
+                _LOGGER.debug("CGDN1 device activity detected on topic: %s", message.topic)
+                # Any MQTT activity from this device means it's alive
+                if status_sensor.hass:
+                    current_time = int(time.time())
+                    if status_sensor._last_timestamp == 0 or (current_time - status_sensor._last_timestamp) > 60:
+                        _LOGGER.info("CGDN1 device %s appears to be online, updating status", mac)
+                        status_sensor.update_timestamp(current_time)
+                        # Trigger a config publish to get fresh data
+                        asyncio.create_task(sensors[5].publish_config())
+            except Exception as e:
+                _LOGGER.error("Error in CGDN1 device alive check: %s", str(e))
+        
+        await mqtt.async_subscribe(
+            hass, f"{MQTT_TOPIC_PREFIX}/{mac}/#", device_alive_check, 1
+        )
 
     # Set up timer for periodic publishing
     async def publish_config_wrapper(*args):
@@ -409,9 +408,14 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
         """Update the last received timestamp."""
         old_timestamp = self._last_timestamp
         self._last_timestamp = int(timestamp)
-        if old_timestamp == 0 or self._attr_native_value == "offline":
+        old_status = self._attr_native_value
+        if old_timestamp == 0 or old_status == "offline":
             _LOGGER.info("Device %s came online (timestamp: %s)", self._mac, timestamp)
         self._update_status()
+        # Log if status changed unexpectedly
+        if old_status == "online" and self._attr_native_value == "offline":
+            _LOGGER.error("Device %s immediately went offline after timestamp update! old_ts=%s, new_ts=%s, current_time=%s", 
+                         self._mac, old_timestamp, self._last_timestamp, int(time.time()))
 
     @callback
     def _update_status(self):
@@ -420,12 +424,14 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
             return
             
         current_time = int(time.time())
-        new_status = "online" if current_time - self._last_timestamp <= OFFLINE_TIMEOUT else "offline"
+        time_since_last_msg = current_time - self._last_timestamp
+        new_status = "online" if time_since_last_msg <= OFFLINE_TIMEOUT else "offline"
         if self._attr_native_value != new_status:
             old_status = self._attr_native_value
             self._attr_native_value = new_status
             self.async_write_ha_state()
-            _LOGGER.info("Device %s status changed from %s to %s", self._mac, old_status, new_status)
+            _LOGGER.info("Device %s status changed from %s to %s (time since last message: %s seconds)", 
+                        self._mac, old_status, new_status, time_since_last_msg)
             
             # Update other sensors' availability
             sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])

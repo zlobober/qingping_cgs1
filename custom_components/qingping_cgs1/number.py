@@ -14,7 +14,7 @@ from .const import (
     CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL,
     CONF_CO2_OFFSET, CONF_PM25_OFFSET, CONF_PM10_OFFSET, 
     CONF_NOISE_OFFSET, CONF_TVOC_OFFSET, CONF_TVOC_INDEX_OFFSET,
-    CONF_POWER_OFF_TIME, CONF_DISPLAY_OFF_TIME, CONF_NIGHT_MODE_START_TIME, CONF_NIGHT_MODE_END_TIME,
+    CONF_POWER_OFF_TIME,
     CONF_AUTO_SLIDING_TIME, CONF_SCREENSAVER_TYPE, CONF_TIMEZONE,
     DEFAULT_SENSOR_OFFSET
 )
@@ -30,6 +30,10 @@ async def async_setup_entry(
     model = config_entry.data[CONF_MODEL]
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     native_temp_unit = hass.config.units.temperature_unit
+    if native_temp_unit == UnitOfTemperature.FAHRENHEIT:
+            step = 0.1
+    else:
+            step = 1
 
     device_info = {
         "identifiers": {(DOMAIN, mac)},
@@ -39,8 +43,8 @@ async def async_setup_entry(
     }
 
     entities = [
-        QingpingCGSxOffsetNumber(coordinator, config_entry, mac, name, "Temp Offset", CONF_TEMPERATURE_OFFSET, device_info, native_temp_unit),
-        QingpingCGSxOffsetNumber(coordinator, config_entry, mac, name, "Humidity Offset", CONF_HUMIDITY_OFFSET, device_info, "%"),
+        QingpingCGSxOffsetNumber(coordinator, config_entry, mac, name, "Temp Offset", CONF_TEMPERATURE_OFFSET, device_info, native_temp_unit, step),
+        QingpingCGSxOffsetNumber(coordinator, config_entry, mac, name, "Humidity Offset", CONF_HUMIDITY_OFFSET, device_info, "%", step),
         QingpingCGSxUpdateIntervalNumber(coordinator, config_entry, mac, name, device_info),
         QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "CO2 Offset", CONF_CO2_OFFSET, device_info, "ppm"),
         QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "PM2.5 Offset", CONF_PM25_OFFSET, device_info, "µg/m³"),
@@ -62,7 +66,7 @@ async def async_setup_entry(
             QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Power Off Time", CONF_POWER_OFF_TIME, device_info, 0, 60, 1, 30, "minutes", NumberMode.SLIDER),
             #QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Display Off Time", CONF_DISPLAY_OFF_TIME, device_info, 0, 300, 1, 30, "seconds", NumberMode.SLIDER),
             QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Auto Sliding Time", CONF_AUTO_SLIDING_TIME, device_info, 0, 180, 5, 30, "seconds", NumberMode.SLIDER),
-            QingpingCGSxScreensaverTypeNumber(coordinator, config_entry, mac, name, device_info),
+            #QingpingCGSxScreensaverTypeNumber(coordinator, config_entry, mac, name, device_info),
             QingpingCGSxTimezoneNumber(coordinator, config_entry, mac, name, device_info),
         ])
 
@@ -71,7 +75,7 @@ async def async_setup_entry(
 class QingpingCGSxOffsetNumber(CoordinatorEntity, NumberEntity):
     """Representation of a Qingping CGSx offset number input."""
 
-    def __init__(self, coordinator, config_entry, mac, name, offset_name, offset_key, device_info, unit_of_measurement):
+    def __init__(self, coordinator, config_entry, mac, name, offset_name, offset_key, device_info, unit_of_measurement, step):
         """Initialize the number entity."""
         super().__init__(coordinator)
         self._config_entry = config_entry
@@ -82,7 +86,7 @@ class QingpingCGSxOffsetNumber(CoordinatorEntity, NumberEntity):
         self._attr_device_info = device_info
         self._attr_native_min_value = -10
         self._attr_native_max_value = 10
-        self._attr_native_step = 1
+        self._attr_native_step = step
         self._attr_native_unit_of_measurement = unit_of_measurement
         self._attr_entity_category = EntityCategory.CONFIG
         self._attr_mode = NumberMode.BOX  # Use number box instead of slider

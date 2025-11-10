@@ -97,12 +97,17 @@ async def _update_settings_from_device(hass: HomeAssistant, config_entry: Config
     )
     
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    native_temp_unit = hass.config.units.temperature_unit
+    if native_temp_unit == UnitOfTemperature.FAHRENHEIT:
+            unit_based_calc = (CONF_TEMPERATURE_OFFSET, lambda x: round((x / 100) * 9/5, 1))
+    else:
+            unit_based_calc = (CONF_TEMPERATURE_OFFSET, lambda x: round(x / 100, 1))
     updated = False
     
     # Map device settings to HA entity keys and conversion functions
     setting_mappings = {
         # Temperature offset: device sends value * 100, we need to divide by 100
-        "temperature_offset": (CONF_TEMPERATURE_OFFSET, lambda x: round(x / 100, 1)),
+        "temperature_offset": unit_based_calc,
         # Humidity offset: device sends value * 10, we need to divide by 10
         "humidity_offset": (CONF_HUMIDITY_OFFSET, lambda x: round(x / 10, 1)),
         # Other offsets: direct integer values

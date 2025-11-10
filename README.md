@@ -87,8 +87,8 @@ The integration supports automatic discovery of Qingping CGS1/CGS2/CGDN1 devices
    - mg/m³ = ppb/218.77<br />
    
    **eTVOC Sensor**: The sensor can be set to 3 different measurement units, by default it is VOC index. The component converts from voc index to get ppb and mg/m³.
-   - ppb = (math.log(501-voc_index) - 6.24) * -2215.4
-   - mg/m³ = (ppb*4.5*10 + 5) / 10 / 1000
+   - ppb = ( math.log ( 501 - voc_index ) - 6.24) * -2215.4
+   - mg/m³ = ( ppb * 4.5 * 10 + 5 ) / 10 / 1000
       
 5. **Data Updates**: The component subscribes to MQTT messages from the device. When new data is received, it updates the relevant sensors in Home Assistant.
 

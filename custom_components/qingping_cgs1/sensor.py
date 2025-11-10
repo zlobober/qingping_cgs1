@@ -219,10 +219,7 @@ async def async_setup_entry(
     def message_received(message):
         """Handle new MQTT messages."""
         try:
-            _LOGGER.warning("=== MQTT MESSAGE RECEIVED === Topic: %s", message.topic)
-            
             payload = json.loads(message.payload)
-            _LOGGER.warning("Payload type: %s", type(payload))
             
             if not isinstance(payload, dict):
                 _LOGGER.error("Payload is not a dictionary")
@@ -235,15 +232,13 @@ async def async_setup_entry(
             received_mac = payload.get("mac", "").replace(":", "").upper()
             expected_mac = mac.replace(":", "").upper()
             
-            _LOGGER.warning("Received MAC: %s, Expected MAC: %s, Type: %s", received_mac, expected_mac, message_type)
-            
-            # Skip MAC check for type 28 (settings) messages as they don't include MAC
+            # Skip MAC check for messages without MAC (type 28, 13, 10, 17, etc.)
             # We're subscribed to this device's specific topic, so we know it's for us
             if received_mac and received_mac != expected_mac:
                 _LOGGER.debug("Received message for a different device. Expected: %s, Got: %s", expected_mac, received_mac)
                 return
             
-            _LOGGER.warning("Processing MQTT message for device %s", mac)
+            _LOGGER.debug("Processing MQTT message type %s for device %s", message_type, mac)
             
             # Update timestamp first - any message from device means it's online
             # Always use current system time, not device's timestamp which may be unreliable
@@ -267,18 +262,13 @@ async def async_setup_entry(
                     mac_sensor.update_mac(mac_address)
 
             # Handle type 28 messages (device settings update) - Check BEFORE sensorData
-            _LOGGER.warning("=== MESSAGE TYPE: %s ===", message_type)
-            
             if message_type == 28 or message_type == "28":
-                _LOGGER.error("!!! TYPE 28 SETTINGS UPDATE DETECTED !!!")
-                _LOGGER.error("Full payload: %s", json.dumps(payload, indent=2))
+                _LOGGER.info("Type 28 settings update received for device %s", mac)
                 settings = payload.get("setting", {})
-                _LOGGER.error("Settings extracted: %s", settings)
                 if settings:
-                    _LOGGER.error("!!! CREATING TASK TO UPDATE SETTINGS !!!")
                     hass.async_create_task(_update_settings_from_device(hass, config_entry, settings, model))
                 else:
-                    _LOGGER.error("!!! TYPE 28 HAS NO SETTINGS DICT !!!")
+                    _LOGGER.warning("Type 28 message has no settings dict")
                 return  # Don't process as sensor data
 
             sensor_data = payload.get("sensorData")
@@ -336,34 +326,7 @@ async def async_setup_entry(
     await mqtt.async_subscribe(
         hass, f"{MQTT_TOPIC_PREFIX}/{mac}/up", message_received, 1
     )
-    _LOGGER.warning("=== SUBSCRIBED TO: %s/%s/up ===", MQTT_TOPIC_PREFIX, mac)
-
-    # CGDN1-specific: Subscribe to any message for this device to detect when it comes online
-    # CGDN1 doesn't always send full sensor data on power-on like CGS1/CGS2
-    if model == "CGDN1":
-        @callback
-        def device_alive_check(message):
-            """Detect any MQTT activity from CGDN1 device."""
-            try:
-                # Skip the main /up topic as it's already handled
-                if message.topic.endswith("/up"):
-                    return
-                    
-                _LOGGER.debug("CGDN1 device activity detected on topic: %s", message.topic)
-                # Any MQTT activity from this device means it's alive
-                if status_sensor.hass:
-                    current_time = int(time.time())
-                    if status_sensor._last_timestamp == 0 or (current_time - status_sensor._last_timestamp) > 60:
-                        _LOGGER.info("CGDN1 device %s appears to be online, updating status", mac)
-                        status_sensor.update_timestamp(current_time)
-                        # Trigger a config publish to get fresh data
-                        asyncio.create_task(sensors[5].publish_config())
-            except Exception as e:
-                _LOGGER.error("Error in CGDN1 device alive check: %s", str(e))
-        
-        await mqtt.async_subscribe(
-            hass, f"{MQTT_TOPIC_PREFIX}/{mac}/#", device_alive_check, 1
-        )
+    _LOGGER.info("Subscribed to MQTT topic: %s/%s/up", MQTT_TOPIC_PREFIX, mac)
 
     # Set up timer for periodic publishing
     async def publish_config_wrapper(*args):

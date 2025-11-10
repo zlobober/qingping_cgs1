@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import timedelta
-import time
+import time, math
 import asyncio
 
 from homeassistant.components import mqtt
@@ -111,7 +111,7 @@ async def _update_settings_from_device(hass: HomeAssistant, config_entry: Config
         "pm10_offset": (CONF_PM10_OFFSET, int),
         "noise_offset": (CONF_NOISE_OFFSET, int),
         "tvoc_zoom": (CONF_TVOC_OFFSET, lambda x: round(x / 10, 1)),
-        "tvoc_index_offset": (CONF_TVOC_INDEX_OFFSET, int),
+        "tvoc_index_zoom": (CONF_TVOC_INDEX_OFFSET, lambda x: round(x / 10, 1)),
         # CGDN1 specific settings
         "power_off_time": (CONF_POWER_OFF_TIME, int),
         "display_off_time": (CONF_DISPLAY_OFF_TIME, int),
@@ -563,11 +563,15 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
                 etvoc_value = int(value)
                 if etvoc_unit == "ppb":
                     # Convert VOC index to ppb (this is an approximate conversion)
-                    etvoc_value = (etvoc_value * 5) + 35
+                    #etvoc_value = (etvoc_value * 5) + 35
+                    etvoc_value = (math.log(501-etvoc_value) - 6.24) * -2215.4
+                    etvoc_value = int(round(float(etvoc_value), 0))
                 elif etvoc_unit == "mg/m³":
                     # Convert VOC index to mg/m³ (this is an approximate conversion)
-                    etvoc_value = (etvoc_value * 0.023) + 0.124
-                self._attr_native_value = round(etvoc_value, 3)
+                    etvoc_value = (math.log(501-etvoc_value) - 6.24) * -2215.4
+                    etvoc_value = (etvoc_value*4.5*10 + 5) / 10 / 1000
+                    etvoc_value = round(etvoc_value, 3)
+                self._attr_native_value = etvoc_value
                 self._attr_native_unit_of_measurement = etvoc_unit
             elif self._sensor_type == SENSOR_TVOC:
                 tvoc_unit = self.coordinator.data.get(CONF_TVOC_UNIT, "ppb")

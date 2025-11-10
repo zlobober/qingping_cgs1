@@ -1,0 +1,101 @@
+"""Support for Qingping CGSx switch entities."""
+from __future__ import annotations
+
+import logging
+
+from homeassistant.components.switch import SwitchEntity
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_NAME, CONF_MAC, CONF_MODEL
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity import EntityCategory
+
+from .const import DOMAIN, CONF_CO2_ASC
+
+_LOGGER = logging.getLogger(__name__)
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up Qingping CGSx switch entities from a config entry."""
+    mac = config_entry.data[CONF_MAC]
+    name = config_entry.data[CONF_NAME]
+    model = config_entry.data[CONF_MODEL]
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+
+    device_info = {
+        "identifiers": {(DOMAIN, mac)},
+        "name": name,
+        "manufacturer": "Qingping",
+        "model": model,
+    }
+
+    switches = []
+
+    # CGDN1-specific switches
+    if model == "CGDN1":
+        switches.append(
+            QingpingCGSxCO2ASCSwitch(coordinator, config_entry, mac, name, device_info)
+        )
+
+    if switches:
+        async_add_entities(switches)
+
+
+class QingpingCGSxCO2ASCSwitch(CoordinatorEntity, SwitchEntity):
+    """Switch to enable/disable CO2 Automatic Self-Calibration."""
+
+    def __init__(self, coordinator, config_entry, mac, name, device_info):
+        """Initialize the switch."""
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._mac = mac
+        self._attr_name = f"{name} CO2 Auto Calibration"
+        self._attr_unique_id = f"{mac}_co2_asc"
+        self._attr_device_info = device_info
+        self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_icon = "mdi:molecule-co2"
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if the switch is on."""
+        return self.coordinator.data.get(CONF_CO2_ASC, 1) == 1
+
+    async def async_turn_on(self, **kwargs) -> None:
+        """Turn the switch on."""
+        await self._set_value(1)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        """Turn the switch off."""
+        await self._set_value(0)
+
+    async def _set_value(self, value: int) -> None:
+        """Set the CO2 ASC value."""
+        self.coordinator.data[CONF_CO2_ASC] = value
+        self.async_write_ha_state()
+
+        # Update config entry
+        new_data = dict(self._config_entry.data)
+        new_data[CONF_CO2_ASC] = value
+        self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+
+        await self.coordinator.async_request_refresh()
+
+        # Publish setting change to device
+        from .sensor import publish_setting_change
+        await publish_setting_change(self.hass, self._mac, CONF_CO2_ASC, value)
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        await super().async_added_to_hass()
+        self._handle_coordinator_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if CONF_CO2_ASC not in self.coordinator.data:
+            self.coordinator.data[CONF_CO2_ASC] = self._config_entry.data.get(CONF_CO2_ASC, 1)
+        self.async_write_ha_state()

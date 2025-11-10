@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import timedelta
-import time
+import time, math
 import asyncio
 
 from homeassistant.components import mqtt
@@ -32,6 +32,10 @@ _LOGGER = logging.getLogger(__name__)
 OFFLINE_TIMEOUT = 300  # 5 minutes in seconds
 MQTT_PUBLISH_RETRY_LIMIT = 3
 MQTT_PUBLISH_RETRY_DELAY = 5  # seconds
+SETTING_CHANGE_DELAY = 5  # seconds delay before publishing setting changes
+
+# Store pending setting publishes to debounce rapid changes
+_pending_setting_publishes = {}
 
 async def ensure_mqtt_connected(hass):
     """Ensure MQTT is connected before publishing."""
@@ -40,6 +44,121 @@ async def ensure_mqtt_connected(hass):
             return True
         await asyncio.sleep(1)
     return False
+
+async def publish_setting_change(hass: HomeAssistant, mac: str, setting_key: str, value: any) -> None:
+    """Publish a single setting change to the device with debounce."""
+    # Cancel any pending publish for this setting
+    publish_key = f"{mac}_{setting_key}"
+    if publish_key in _pending_setting_publishes:
+        _pending_setting_publishes[publish_key].cancel()
+    
+    async def _delayed_publish():
+        """Publish after delay."""
+        try:
+            await asyncio.sleep(SETTING_CHANGE_DELAY)
+            
+            if not await ensure_mqtt_connected(hass):
+                _LOGGER.error("MQTT is not connected, cannot publish setting change")
+                return
+            
+            payload = {
+                "type": "17",
+                "setting": {
+                    setting_key: value
+                }
+            }
+            
+            topic = f"{MQTT_TOPIC_PREFIX}/{mac}/down"
+            await mqtt.async_publish(hass, topic, json.dumps(payload))
+            _LOGGER.info("Published setting change to %s: %s = %s", mac, setting_key, value)
+            
+        except Exception as err:
+            _LOGGER.error("Failed to publish setting change: %s", err)
+        finally:
+            # Clean up the pending publish
+            if publish_key in _pending_setting_publishes:
+                del _pending_setting_publishes[publish_key]
+    
+    # Schedule the delayed publish
+    task = asyncio.create_task(_delayed_publish())
+    _pending_setting_publishes[publish_key] = task
+
+async def _update_settings_from_device(hass: HomeAssistant, config_entry: ConfigEntry, settings: dict, model: str) -> None:
+    """Update Home Assistant entities when settings are changed on the device."""
+    _LOGGER.info("Starting _update_settings_from_device with settings: %s", settings)
+    
+    from .const import (
+        CONF_TEMPERATURE_OFFSET, CONF_HUMIDITY_OFFSET,
+        CONF_CO2_OFFSET, CONF_PM25_OFFSET, CONF_PM10_OFFSET,
+        CONF_NOISE_OFFSET, CONF_TVOC_OFFSET, CONF_TVOC_INDEX_OFFSET,
+        CONF_POWER_OFF_TIME, CONF_DISPLAY_OFF_TIME, CONF_NIGHT_MODE_START_TIME,
+        CONF_NIGHT_MODE_END_TIME, CONF_AUTO_SLIDING_TIME, CONF_SCREENSAVER_TYPE,
+        CONF_CO2_ASC
+    )
+    
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    native_temp_unit = hass.config.units.temperature_unit
+    if native_temp_unit == UnitOfTemperature.FAHRENHEIT:
+            unit_based_calc = (CONF_TEMPERATURE_OFFSET, lambda x: round((x / 100) * 9/5, 1))
+    else:
+            unit_based_calc = (CONF_TEMPERATURE_OFFSET, lambda x: round(x / 100, 1))
+    updated = False
+    
+    # Map device settings to HA entity keys and conversion functions
+    setting_mappings = {
+        # Temperature offset: device sends value * 100, we need to divide by 100
+        "temperature_offset": unit_based_calc,
+        # Humidity offset: device sends value * 10, we need to divide by 10
+        "humidity_offset": (CONF_HUMIDITY_OFFSET, lambda x: round(x / 10, 1)),
+        # Other offsets: direct integer values
+        "co2_offset": (CONF_CO2_OFFSET, int),
+        "pm25_offset": (CONF_PM25_OFFSET, int),
+        "pm10_offset": (CONF_PM10_OFFSET, int),
+        "noise_offset": (CONF_NOISE_OFFSET, int),
+        "tvoc_zoom": (CONF_TVOC_OFFSET, lambda x: round(x / 10, 1)),
+        "tvoc_index_zoom": (CONF_TVOC_INDEX_OFFSET, lambda x: round(x / 10, 1)),
+        # CGDN1 specific settings
+        "power_off_time": (CONF_POWER_OFF_TIME, int),
+        "display_off_time": (CONF_DISPLAY_OFF_TIME, int),
+        "night_mode_start_time": (CONF_NIGHT_MODE_START_TIME, int),
+        "night_mode_end_time": (CONF_NIGHT_MODE_END_TIME, int),
+        "auto_slideing_time": (CONF_AUTO_SLIDING_TIME, int),
+        "screensaver_type": (CONF_SCREENSAVER_TYPE, int),
+        "co2_asc": (CONF_CO2_ASC, int),
+    }
+    
+    for device_key, value in settings.items():
+        _LOGGER.info("Processing setting: %s = %s", device_key, value)
+        if device_key in setting_mappings:
+            ha_key, converter = setting_mappings[device_key]
+            try:
+                converted_value = converter(value)
+                _LOGGER.info("Converted %s: %s -> %s", device_key, value, converted_value)
+                
+                # Update coordinator data
+                if coordinator.data.get(ha_key) != converted_value:
+                    coordinator.data[ha_key] = converted_value
+                    updated = True
+                    _LOGGER.info("Updated %s from device: %s", ha_key, converted_value)
+                    
+                    # Update config entry
+                    new_data = dict(config_entry.data)
+                    new_data[ha_key] = converted_value
+                    hass.config_entries.async_update_entry(config_entry, data=new_data)
+                else:
+                    _LOGGER.info("Setting %s already has value %s, no update needed", ha_key, converted_value)
+                    
+            except (ValueError, TypeError) as err:
+                _LOGGER.error("Failed to convert setting %s with value %s: %s", device_key, value, err)
+        else:
+            _LOGGER.warning("Unknown setting key from device: %s", device_key)
+    
+    # Refresh coordinator to update all entities
+    if updated:
+        _LOGGER.info("Settings updated, refreshing coordinator")
+        await coordinator.async_request_refresh()
+    else:
+        _LOGGER.info("No settings were updated")
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -106,13 +225,31 @@ async def async_setup_entry(
         """Handle new MQTT messages."""
         try:
             payload = json.loads(message.payload)
+            
             if not isinstance(payload, dict):
                 _LOGGER.error("Payload is not a dictionary")
                 return
 
-            if payload.get("mac") != mac:
-                _LOGGER.debug("Received message for a different device")
+            # Check message type first - type 28 (settings) messages don't include MAC
+            message_type = payload.get("type")
+            
+            # For messages with MAC, verify it matches
+            received_mac = payload.get("mac", "").replace(":", "").upper()
+            expected_mac = mac.replace(":", "").upper()
+            
+            # Skip MAC check for messages without MAC (type 28, 13, 10, 17, etc.)
+            # We're subscribed to this device's specific topic, so we know it's for us
+            if received_mac and received_mac != expected_mac:
+                _LOGGER.debug("Received message for a different device. Expected: %s, Got: %s", expected_mac, received_mac)
                 return
+            
+            _LOGGER.debug("Processing MQTT message type %s for device %s", message_type, mac)
+            
+            # Update timestamp first - any message from device means it's online
+            # Always use current system time, not device's timestamp which may be unreliable
+            current_timestamp = int(time.time())
+            if status_sensor.hass:
+                status_sensor.update_timestamp(current_timestamp)
 
             firmware_version = payload.get("version")
             if firmware_version is not None:
@@ -124,19 +261,25 @@ async def async_setup_entry(
                 if type_sensor.hass:
                     type_sensor.update_type(device_type)
 
-            timestamp = payload.get("timestamp")
-            if timestamp is not None:
-                if status_sensor.hass:
-                    status_sensor.update_timestamp(timestamp)
-
             mac_address = payload.get("mac")
             if mac_address is not None:
                 if mac_sensor.hass:
                     mac_sensor.update_mac(mac_address)
 
+            # Handle type 28 messages (device settings update) - Check BEFORE sensorData
+            if message_type == 28 or message_type == "28":
+                _LOGGER.info("Type 28 settings update received for device %s", mac)
+                settings = payload.get("setting", {})
+                if settings:
+                    hass.async_create_task(_update_settings_from_device(hass, config_entry, settings, model))
+                else:
+                    _LOGGER.warning("Type 28 message has no settings dict")
+                return  # Don't process as sensor data
+
             sensor_data = payload.get("sensorData")
             if not isinstance(sensor_data, list) or not sensor_data:
-                _LOGGER.error("sensorData is not a non-empty list")
+                _LOGGER.debug("No valid sensorData in payload, possibly a config response or device just powered on")
+                # Device is online, just waiting for sensor data
                 return
             if len(sensor_data) == 1:
                 #ignore type 17 sensor data                
@@ -147,7 +290,8 @@ async def async_setup_entry(
                         battery_data = data[SENSOR_BATTERY]
                         if isinstance(battery_data, dict):
                             battery_status = battery_data.get("status")
-                            battery_charging = battery_status == 1
+                            if battery_status is not None:
+                                battery_charging = (battery_status == 1)  # Explicitly True or False
                     
                     # Update battery state sensor first if we have status
                     if battery_status is not None and battery_state.hass:
@@ -187,10 +331,12 @@ async def async_setup_entry(
     await mqtt.async_subscribe(
         hass, f"{MQTT_TOPIC_PREFIX}/{mac}/up", message_received, 1
     )
+    _LOGGER.info("Subscribed to MQTT topic: %s/%s/up", MQTT_TOPIC_PREFIX, mac)
 
     # Set up timer for periodic publishing
     async def publish_config_wrapper(*args):
         if await ensure_mqtt_connected(hass):
+            # Don't force status to online - let actual device messages determine status
             await sensors[5].publish_config()
         else:
             _LOGGER.error("Failed to connect to MQTT for periodic config publish")
@@ -199,11 +345,15 @@ async def async_setup_entry(
         hass, publish_config_wrapper, timedelta(seconds=int(DEFAULT_DURATION))
     )
 
-    # Publish config immediately upon setup
-    if await ensure_mqtt_connected(hass):
-        await publish_config_wrapper()
-    else:
-        _LOGGER.error("Failed to connect to MQTT for initial config publish")
+    # Publish config immediately upon setup with a delay to ensure entities are ready
+    async def delayed_publish():
+        await asyncio.sleep(2)  # Wait 2 seconds for entities to be fully added
+        if await ensure_mqtt_connected(hass):
+            await publish_config_wrapper()
+        else:
+            _LOGGER.error("Failed to connect to MQTT for initial config publish")
+    
+    asyncio.create_task(delayed_publish())
 
 class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Qingping CGSx status sensor."""
@@ -224,8 +374,16 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
     @callback
     def update_timestamp(self, timestamp):
         """Update the last received timestamp."""
+        old_timestamp = self._last_timestamp
         self._last_timestamp = int(timestamp)
+        old_status = self._attr_native_value
+        if old_timestamp == 0 or old_status == "offline":
+            _LOGGER.info("Device %s came online (timestamp: %s)", self._mac, timestamp)
         self._update_status()
+        # Log if status changed unexpectedly
+        if old_status == "online" and self._attr_native_value == "offline":
+            _LOGGER.error("Device %s immediately went offline after timestamp update! old_ts=%s, new_ts=%s, current_time=%s", 
+                         self._mac, old_timestamp, self._last_timestamp, int(time.time()))
 
     @callback
     def _update_status(self):
@@ -234,17 +392,24 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
             return
             
         current_time = int(time.time())
-        new_status = "online" if current_time - self._last_timestamp <= OFFLINE_TIMEOUT else "offline"
+        time_since_last_msg = current_time - self._last_timestamp
+        new_status = "online" if time_since_last_msg <= OFFLINE_TIMEOUT else "offline"
         if self._attr_native_value != new_status:
+            old_status = self._attr_native_value
             self._attr_native_value = new_status
             self.async_write_ha_state()
+            _LOGGER.info("Device %s status changed from %s to %s (time since last message: %s seconds)", 
+                        self._mac, old_status, new_status, time_since_last_msg)
+            
             # Update other sensors' availability
             sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
             for sensor in sensors:
                 if isinstance(sensor, QingpingCGSxSensor) and sensor.hass:
                     sensor.async_write_ha_state()
+            
             # Call publish_config when status changes from offline to online
             if self._last_status == "offline" and new_status == "online":
+                _LOGGER.info("Device %s recovered from offline, publishing config", self._mac)
                 asyncio.create_task(self._publish_config_on_status_change())
             
             self._last_status = new_status
@@ -253,6 +418,8 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
         """Publish config when status changes from offline to online."""
         if not self.hass:
             return
+        # Add a small delay to let the device fully come online
+        await asyncio.sleep(2)
         sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
         for sensor in sensors:
             if isinstance(sensor, QingpingCGSxSensor):
@@ -262,6 +429,9 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
     async def async_added_to_hass(self):
         """Set up a timer to regularly update the status."""
         await super().async_added_to_hass()
+
+        # Immediately check if we should be online based on recent activity
+        self._update_status()
 
         async def update_status(*_):
             self._update_status()
@@ -331,8 +501,10 @@ class QingpingCGSxBatteryStateSensor(CoordinatorEntity, SensorEntity):
             self._attr_native_value = "Charging"
         elif status == 2:
             self._attr_native_value = "Fully Charged"
-        else:
+        elif status == 0:
             self._attr_native_value = "Discharging"
+        else:
+            self._attr_native_value = "Unknown"
         self.async_write_ha_state()
 
 class QingpingCGSxTypeSensor(CoordinatorEntity, SensorEntity):
@@ -385,22 +557,26 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
                 if self._attr_native_unit_of_measurement == UnitOfTemperature.FAHRENHEIT:
                     # Convert to Fahrenheit
                     temp_fahrenheit = (temp_celsius * 9/5) + 32
-                    self._attr_native_value = round(float(temp_fahrenheit) + offset, 1)
+                    self._attr_native_value = round(float(temp_fahrenheit), 1)
                 else:
-                    self._attr_native_value = round(float(temp_celsius) + offset, 1)
+                    self._attr_native_value = round(float(temp_celsius), 1)
             elif self._sensor_type == SENSOR_HUMIDITY:
                 offset = self.coordinator.data.get(CONF_HUMIDITY_OFFSET, 0)
-                self._attr_native_value = round(float(value) + offset, 1)
+                self._attr_native_value = round(float(value), 1)
             elif self._sensor_type == SENSOR_ETVOC:
                 etvoc_unit = self.coordinator.data.get(CONF_ETVOC_UNIT, "index")
                 etvoc_value = int(value)
                 if etvoc_unit == "ppb":
                     # Convert VOC index to ppb (this is an approximate conversion)
-                    etvoc_value = (etvoc_value * 5) + 35
+                    #etvoc_value = (etvoc_value * 5) + 35
+                    etvoc_value = (math.log(501-etvoc_value) - 6.24) * -2215.4
+                    etvoc_value = int(round(float(etvoc_value), 0))
                 elif etvoc_unit == "mg/m³":
                     # Convert VOC index to mg/m³ (this is an approximate conversion)
-                    etvoc_value = (etvoc_value * 0.023) + 0.124
-                self._attr_native_value = round(etvoc_value, 3)
+                    etvoc_value = (math.log(501-etvoc_value) - 6.24) * -2215.4
+                    etvoc_value = (etvoc_value*4.5*10 + 5) / 10 / 1000
+                    etvoc_value = round(etvoc_value, 3)
+                self._attr_native_value = etvoc_value
                 self._attr_native_unit_of_measurement = etvoc_unit
             elif self._sensor_type == SENSOR_TVOC:
                 tvoc_unit = self.coordinator.data.get(CONF_TVOC_UNIT, "ppb")
@@ -408,9 +584,10 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
                 if tvoc_unit == "ppm":
                     tvoc_value /= 1000
                 elif tvoc_unit == "mg/m³":
-                    tvoc_value /= 1000 
-                    tvoc_value *= 0.0409 
-                    tvoc_value *= 111.1  # Approximate conversion factor
+                    tvoc_value /= 218.77
+                    # tvoc_value /= 1000 
+                    # tvoc_value *= 0.0409 
+                    # tvoc_value *= 111.1  # Approximate conversion factor
                 self._attr_native_value = round(tvoc_value, 3)
                 self._attr_native_unit_of_measurement = tvoc_unit
             else:

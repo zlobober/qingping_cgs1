@@ -16,7 +16,8 @@ This custom component integrates the Qingping Air Quality Monitors [CGS1/CGS2/CG
 
 - Automatic discovery of Qingping CGS1/CGS2/CGDN1 devices
 - Real-time updates of air quality data
-- Configurable temperature and humidity offsets
+- Configurable offsets
+- Configuration entites
 - Adjustable update interval
 - Automatic unit conversion for temperature
 - Device status monitoring
@@ -39,7 +40,7 @@ This custom component integrates the Qingping Air Quality Monitors [CGS1/CGS2/CG
 5. Search for "Qingping Pro AQM" and follow the configuration steps
 
 ## Configuration
-<img src="https://github.com/user-attachments/assets/3cc92957-3460-4ba4-b78f-17afab455f40" alt="Device Discovery" width="250" align="left">
+<img src="https://github.com/user-attachments/assets/a123e039-7ada-4062-a5aa-f2c7b2d20085" alt="Device Discovery" width="250" align="left">
 The integration supports automatic discovery of Qingping CGS1/CGS2/CGDN1 devices.
 <br />If your device is not discovered automatically, you can add it manually by providing the MAC address. 
 <br />⚠️ Do not include : in your MAC address. example: 532D38701E1F
@@ -47,7 +48,7 @@ The integration supports automatic discovery of Qingping CGS1/CGS2/CGDN1 devices
 
 
 ## How it Works
-<img src="https://github.com/user-attachments/assets/46567747-a8cb-443e-be23-78a87e741a42" alt="Device Discovery" width="275" align="right">
+<img src="https://github.com/user-attachments/assets/55a42477-59a7-48b6-b70b-f743c5e2a69a" alt="Device Discovery" width="275" align="right">
 
 1. **Device Discovery**: The integration uses MQTT to discover Qingping CGS1/CGS2/CGDN1 devices on your network. It listens for messages on the MQTT topic `qingping/#` to identify available devices.
 
@@ -62,6 +63,19 @@ The integration supports automatic discovery of Qingping CGS1/CGS2/CGDN1 devices
    - TVOC (ppb, ppm and mg/m³) `Only on CGS1`
    - eTVOC (ppb, VOC index and mg/m³) `Only on CGS2`
    - Noise level `Only on CGS2`
+   - Temp & Humidity Offsets
+   - PM2.5 Offsets
+   - PM10 Offsets
+   - TVOC Offsets `Only on CGS1`
+   - eTVOC Offsets `Only on CGS2`
+   - CO2 Offsets
+   - Auto Sliding `Only on CGDN1`
+   - Auto CO2 Calibration `Only on CGDN1`
+   - Manual Calibration `Only on CGDN1`
+   - Night Mode `Only on CGDN1`
+   - Power Off Time `Only on CGDN1`
+   - Screensaver `Only on CGDN1`
+   - Timezone `Only on CGDN1`
    - Battery level
    - Device status (online/offline)
    - Firmware version
@@ -73,12 +87,12 @@ The integration supports automatic discovery of Qingping CGS1/CGS2/CGDN1 devices
    - mg/m³ = ppb/218.77<br />
    
    **eTVOC Sensor**: The sensor can be set to 3 different measurement units, by default it is VOC index. The component converts from voc index to get ppb and mg/m³.
-   - ppb = (index * 5) + 35
-   - mg/m³ = (index * 0.023) + 0.124
+   - ppb = ( math.log ( 501 - voc_index ) - 6.24) * -2215.4
+   - mg/m³ = ( ppb * 4.5 * 10 + 5 ) / 10 / 1000
       
 5. **Data Updates**: The component subscribes to MQTT messages from the device. When new data is received, it updates the relevant sensors in Home Assistant.
 
-6. **Offset Adjustments**: The integration allows you to set offset values for temperature and humidity readings. These offsets are applied to the raw sensor data before it's displayed in Home Assistant.
+6. **Offset Adjustments**: The integration allows you to set offset values for sesor readings. These offsets are applied to the device before it's displayed in Home Assistant.
 
 7. **Update Interval**: You can configure how often the device should report new data. This is done through a number entity that allows you to set the update interval in seconds.
 

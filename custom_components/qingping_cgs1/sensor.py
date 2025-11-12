@@ -577,7 +577,8 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
                     etvoc_value = (etvoc_value*4.5*10 + 5) / 10 / 1000
                     etvoc_value = round(etvoc_value, 3)
                 self._attr_native_value = etvoc_value
-                self._attr_native_unit_of_measurement = etvoc_unit
+                # Set unit to None if "index" is selected (no unit), otherwise use the unit
+                self._attr_native_unit_of_measurement = None if etvoc_unit == "index" else etvoc_unit
             elif self._sensor_type == SENSOR_TVOC:
                 tvoc_unit = self.coordinator.data.get(CONF_TVOC_UNIT, "ppb")
                 tvoc_value = int(value)

@@ -29,7 +29,7 @@ This custom component integrates the Qingping devices with Home Assistant, allow
 - Automatic discovery of Qingping devices *
 - Real-time updates of air quality data
 - Configurable offsets
-- Configuration entites
+- Configuration entites `⚠️ Note: For battery operating TLV devices configuration changes only work while device is plugged into USB power`
 - Adjustable update interval
 - Automatic unit conversion for temperature
 - Device status monitoring
@@ -76,24 +76,29 @@ This custom component integrates the Qingping devices with Home Assistant, allow
    - PM10
    - TVOC (ppb, ppm and mg/m³) `Only on CGS1`
    - eTVOC (ppb, VOC index and mg/m³) `Only on CGS2`
-   - Noise level `Only on CGS2`
+   - Noise level `Only on CGS2, CGR1AD`
    - Temp & Humidity Offsets
    - PM2.5 Offsets
    - PM10 Offsets
    - TVOC Offsets `Only on CGS1`
    - eTVOC Offsets `Only on CGS2`
+   - Pressure Offset `Only on CGP23W`
    - CO2 Offsets
+   - CO₂ Interval `Only on CGP22C`
    - Auto Sliding `Only on CGDN1`
-   - Auto CO2 Calibration `Only on CGDN1`
-   - Manual Calibration `Only on CGDN1`
+   - Auto CO2 Calibration `Only on CGDN1, CGP22C, CGP23W, CGP22W, CGR1AD`
+   - Manual Calibration `Only on CGDN1, CGP22C, CGP23W, CGP22W, CGR1AD`
    - Night Mode `Only on CGDN1`
-   - Power Off Time `Only on CGDN1`
+   - Power Off Time `Only on CGDN1, CGP22C`
    - Screensaver `Only on CGDN1`
    - Timezone `Only on CGDN1`
+   - Pressure `Only on CGP23W`
+   - Light/Illuminance `Only on CGR1AD`
+   - Battery Charging State
    - Battery level
    - Device status (online/offline)
    - Firmware version
-   - Report type (12 = realtime / 17 = historic)
+   - Report type (realtime /historic) `⚠️ TLV Devices real-time mode only work when device is USB powered`
    - MAC address
 
 4. **TVOC Sensor**: The sensor can be set to 3 different measurement units, by default it is ppb. The component converts from ppb to get ppm and mg/m³.
@@ -105,21 +110,42 @@ This custom component integrates the Qingping devices with Home Assistant, allow
    - mg/m³ = ( ppb * 4.5 * 10 + 5 ) / 10 / 1000
       
 5. **Data Updates**: The component subscribes to MQTT messages from the device. When new data is received, it updates the relevant sensors in Home Assistant.
+   - ⚠️ Configuration changes **only work when device is USB powered** `Only on TLV Devices`
+   - ⚠️ Real-time mode **only work when device is USB powered** `Only on TLV Devices`
 
-6. **Offset Adjustments**: The integration allows you to set offset values for sesor readings. These offsets are applied to the device before it's displayed in Home Assistant.
+7. **Offset Adjustments**: The integration allows you to set offset values for sesor readings. These offsets are applied to the device before it's displayed in Home Assistant.
 
-7. **Update Interval**: You can configure how often the device should report new data. This is done through a number entity that allows you to set the update interval in seconds.
+8. **Reporting**: You can configure how often the device should report new data.
+   - **Update Interval**: This is done through a number entity that allows you to set the update interval in seconds. `Only on JSON Devices, JSON devices only support realtime data on this integration`
+   - **Report Interval**: How often device sends data (10-60 minutes, historic mode only) `Only on TLV Devices`
+   - **Sample Interval**: How often device reads sensors (10-300 seconds, historic mode only) `Only on TLV Devices`
+   - **Report Mode**: Manual override for real-time/historic mode `Only on TLV Devices`
 
-8. **Configuration Publishing**: The integration periodically publishes configuration messages to the device via MQTT. This ensures that the device maintains the correct reporting interval, realtime reporting and other settings.
+9. **Configuration Publishing**: The integration periodically publishes configuration messages to the device via MQTT. This ensures that the device maintains the correct reporting interval, realtime reporting and other settings. `⚠️ Note: For battery operating TLV devices configuration changes only work while device is plugged into USB power`
 
-9. **Status Monitoring**: The integration tracks the device's online/offline status based on the timestamp of the last received message. If no message is received for 5 minutes, the device is considered offline.
+10. **Status Monitoring**:
+    - Real-time mode: Offline after 5 minutes of no activity. `JSON and TLV Devices`
+    - Historic mode: Offline after 15 minutes of no activity. `Only on TLV Devices`
 
-10. **Unit Conversion**: The integration automatically converts temperature readings to the unit system configured in your Home Assistant instance (Celsius or Fahrenheit).
+11. **Unit Conversion**:
+    - The integration automatically converts temperature readings to the unit system configured in your Home Assistant instance (Celsius or Fahrenheit). `Only on JSON Devices`
+    - Temperature Unit: Switch between Celsius (°C) and Fahrenheit (°F) on device page  `Only on TLV Devices`
+    -  ⚠️ Time format (12h/24h) cannot be changed via MQTT Yet.  `Only on TLV Devices`
+    
+13. **Automatic Report Mode Switching**: `Only on TLV Devices`
+    - Real-time mode: Automatically enabled when USB powered (fast updates every 3-5 seconds)
+    - Historic mode: Automatically enabled when on battery (slower updates, battery friendly)
+
+14. **TLV Protocol Support**: Newer devices use TLV (Type-Length-Value) binary format instead of JSON:
+    - Automatic detection of message format
+    - Support for historical data buffering (CMD 0x42)
+    - Always displays most recent sensor readings
+    - Enhanced configuration options via TLV commands
 
 ## Troubleshooting
 
 If you encounter any issues:
-1. Check that your Qingping CGS1/CGS2/CGDN1 device can send data via MQTT
+1. Check that your Qingping device can send data via MQTT
 2. Ensure MQTT is set up on each device as instructed
 3. Ensure that MQTT is properly set up in your Home Assistant instance
 4. Check the Home Assistant logs for any error messages related to this integration

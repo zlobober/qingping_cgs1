@@ -1,15 +1,15 @@
-# Qingping AQM [CGS1/CGS2/CGDN1] integration for Home Assistant
+# Qingping integration for Home Assistant
 
 <img src="https://brands.home-assistant.io/qingping_cgs1/dark_icon.png" alt="Qingping CGSx Icon" width="150" align="left" style="margin-right: 20px;">
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs) ![Download](https://img.shields.io/github/downloads/mash2k3/qingping_cgs1/total.svg?label=Downloads) ![Analytics](https://img.shields.io/badge/dynamic/json?label=Installs&cacheSeconds=15600&url=https://analytics.home-assistant.io/custom_integrations.json&query=$.qingping_cgs1.total)
 
-This custom component integrates the Qingping Air Quality Monitors [CGS1/CGS2/CGDN1] with Home Assistant, allowing you to monitor various environmental parameters in realtime.
+This custom component integrates the Qingping devices with Home Assistant, allowing you to monitor various environmental parameters in realtime.
 <br /><br /><br />
 ## Requirements
 
 - MQTT integration installed and configured.
-- Enable MQTT on Qingping AQM devices using instructions below.
+- Enable MQTT on Qingping devices using instructions below.
 - HACS installed.
 
 ## Supported Devices
@@ -26,7 +26,7 @@ This custom component integrates the Qingping Air Quality Monitors [CGS1/CGS2/CG
  
 ## Features
 
-- Automatic discovery of Qingping CGS1/CGS2/CGDN1 devices
+- Automatic discovery of Qingping devices *
 - Real-time updates of air quality data
 - Configurable offsets
 - Configuration entites
@@ -52,8 +52,8 @@ This custom component integrates the Qingping Air Quality Monitors [CGS1/CGS2/CG
 5. Search for "Qingping Pro AQM" and follow the configuration steps
 
 ## Configuration
-<img src="https://github.com/user-attachments/assets/a123e039-7ada-4062-a5aa-f2c7b2d20085" alt="Device Discovery" width="250" align="left">
-The integration supports automatic discovery of Qingping CGS1/CGS2/CGDN1 devices.
+<img src="https://github.com/user-attachments/assets/a123e039-7ada-4062-a5aa-f2c7b2d20085" alt="Device Discovery" width="250" align="left" />
+The integration supports automatic discovery of Qingping devices `JSON devices must be publishing and TLV devices you must press button for 2 secs to be discovered`
 <br />If your device is not discovered automatically, you can add it manually by providing the MAC address. 
 <br />⚠️ Do not include : in your MAC address. example: 532D38701E1F
 <br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br />
@@ -62,7 +62,7 @@ The integration supports automatic discovery of Qingping CGS1/CGS2/CGDN1 devices
 ## How it Works
 <img src="https://github.com/user-attachments/assets/55a42477-59a7-48b6-b70b-f743c5e2a69a" alt="Device Discovery" width="275" align="right">
 
-1. **Device Discovery**: The integration uses MQTT to discover Qingping CGS1/CGS2/CGDN1 devices on your network. It listens for messages on the MQTT topic `qingping/#` to identify available devices.
+1. **Device Discovery**: The integration uses MQTT to discover Qingping devices on your network. It listens for messages on the MQTT topic `qingping/#` to identify available devices.
 
 2. **Configuration**: Once a device is discovered, you can add it to your Home Assistant instance through the UI. The integration will prompt you to enter a name and model for the device and confirm its MAC address.
 

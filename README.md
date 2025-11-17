@@ -157,3 +157,7 @@ Contributions to this project are welcome! Please feel free to submit a Pull Req
 ## Support
 
 If you have any questions or need help, please open an issue on GitHub.
+
+## Acknowledgments
+
+Special thanks to the **Qingping team** for their technical support and for providing sample devices to help improve this integration for the community. Their collaboration has been invaluable in bringing enhanced support for TLV protocol devices and advanced configuration features to Home Assistant users.

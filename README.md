@@ -29,7 +29,7 @@ This custom component integrates the Qingping devices with Home Assistant, allow
 - Automatic discovery of Qingping devices *
 - Real-time updates of air quality data
 - Configurable offsets
-- Configuration entites `⚠️ Note: For battery operating TLV devices configuration changes only work while device is plugged into USB power`
+- Configuration entites
 - Adjustable update interval
 - Automatic unit conversion for temperature
 - Device status monitoring
@@ -121,7 +121,7 @@ This custom component integrates the Qingping devices with Home Assistant, allow
    - **Sample Interval**: How often device reads sensors (10-300 seconds, historic mode only) `Only on TLV Devices`
    - **Report Mode**: Manual override for real-time/historic mode `Only on TLV Devices`
 
-9. **Configuration Publishing**: The integration periodically publishes configuration messages to the device via MQTT. This ensures that the device maintains the correct reporting interval, realtime reporting and other settings. `⚠️ Note: For battery operating TLV devices configuration changes only work while device is plugged into USB power`
+9. **Configuration Publishing**: The integration periodically publishes configuration messages to the device via MQTT. This ensures that the device maintains the correct reporting interval, realtime reporting and other settings. `⚠️ Note: For battery operating TLV devices, configuration changes only work while device is plugged into USB power`
 
 10. **Status Monitoring**:
     - Real-time mode: Offline after 5 minutes of no activity. `JSON and TLV Devices`

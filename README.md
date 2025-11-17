@@ -52,12 +52,14 @@ This custom component integrates the Qingping devices with Home Assistant, allow
 5. Search for "Qingping Pro AQM" and follow the configuration steps
 
 ## Configuration
-<img src="https://github.com/user-attachments/assets/a123e039-7ada-4062-a5aa-f2c7b2d20085" alt="Device Discovery" width="250" align="left" />
-The integration supports automatic discovery of Qingping devices `JSON devices must be publishing and TLV devices you must press button for 2 secs to be discovered`
-<br />If your device is not discovered automatically, you can add it manually by providing the MAC address. 
-<br />⚠️ Do not include : in your MAC address. example: 532D38701E1F
-<br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br />
 
+<img src="https://github.com/user-attachments/assets/8c712b1f-e13d-424b-8239-16046bbf50ff" alt="Device Discovery" width="250" align="left" ></img>
+- The integration supports automatic discovery of Qingping devices.<br /> 
+`⚠️ For discovery: JSON devices must be actively sending data, while TLV devices require a 2-second button press to appear in the list.`
+- Make sure to select the correct model from dropdown in order to get the correct sensors.
+- If your device is not discovered automatically, you can add it manually by providing the MAC address. 
+`⚠️ Do not include : in your MAC address. example: 532D38701E1F`
+<br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br /><br />
 
 ## How it Works
 <img src="https://github.com/user-attachments/assets/55a42477-59a7-48b6-b70b-f743c5e2a69a" alt="Device Discovery" width="275" align="right">

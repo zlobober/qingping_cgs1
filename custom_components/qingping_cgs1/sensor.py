@@ -21,15 +21,21 @@ from homeassistant.exceptions import HomeAssistantError
 from .const import (
     DOMAIN, MQTT_TOPIC_PREFIX,
     SENSOR_BATTERY, SENSOR_CO2, SENSOR_HUMIDITY, SENSOR_PM10, SENSOR_PM25, SENSOR_TEMPERATURE, SENSOR_TVOC, SENSOR_ETVOC,
-    PERCENTAGE, PPM, PPB, CONCENTRATION, CONF_TVOC_UNIT, CONF_ETVOC_UNIT, SENSOR_NOISE, DB,
+    SENSOR_NOISE, SENSOR_PRESSURE, SENSOR_LIGHT, SENSOR_SIGNAL_STRENGTH, SENSOR_TLV_ETVOC,
+    PERCENTAGE, PPM, PPB, CONCENTRATION, CONF_TVOC_UNIT, CONF_ETVOC_UNIT, DB,
     CONF_TEMPERATURE_OFFSET, CONF_HUMIDITY_OFFSET, CONF_UPDATE_INTERVAL,
+    CONF_REPORT_INTERVAL, CONF_SAMPLE_INTERVAL,
     ATTR_TYPE, ATTR_UP_ITVL, ATTR_DURATION,
-    DEFAULT_TYPE, DEFAULT_DURATION
+    DEFAULT_TYPE, DEFAULT_DURATION, TLV_MODELS, JSON_MODELS,
+    CONF_REPORT_MODE, REPORT_MODE_HISTORIC, REPORT_MODE_REALTIME
 )
+from .tlv_decoder import tlv_decode, is_tlv_format
+from .tlv_encoder import tlv_encode, int_to_bytes_little_endian
 
 _LOGGER = logging.getLogger(__name__)
 
-OFFLINE_TIMEOUT = 300  # 5 minutes in seconds
+OFFLINE_TIMEOUT_REALTIME = 300  # 5 minutes for real-time mode
+OFFLINE_TIMEOUT_HISTORIC = 900  # 15 minutes for historic mode
 MQTT_PUBLISH_RETRY_LIMIT = 3
 MQTT_PUBLISH_RETRY_DELAY = 5  # seconds
 SETTING_CHANGE_DELAY = 5  # seconds delay before publishing setting changes
@@ -45,6 +51,51 @@ async def ensure_mqtt_connected(hass):
         await asyncio.sleep(1)
     return False
 
+async def _auto_switch_report_mode_on_battery_state(hass, config_entry, mac, is_charging, model):
+    """Automatically switch report mode based on battery charging state."""
+    if model not in ["CGP22C", "CGP23W", "CGP22W"]:
+        return
+    
+    from .tlv_encoder import tlv_encode, int_to_bytes_little_endian
+    from .const import CONF_REPORT_MODE, REPORT_MODE_HISTORIC, REPORT_MODE_REALTIME
+    
+    # Get coordinator
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    
+    # Determine mode based on charging state
+    if is_charging:
+        # Real-time mode when charging
+        packets = {
+            0x42: int_to_bytes_little_endian(21600, 2),   # Real-time for 6 hours
+        }
+        mode_name = "REAL-TIME (charging)"
+        new_mode = REPORT_MODE_REALTIME
+    else:
+        # Historic mode when on battery
+        packets = {
+            0x42: int_to_bytes_little_endian(0, 2),   # Disable real-time
+        }
+        mode_name = "HISTORIC (on battery)"
+        new_mode = REPORT_MODE_HISTORIC
+    
+    payload = tlv_encode(0x32, packets)
+    topic = f"qingping/{mac}/down"
+    
+    await mqtt.async_publish(hass, topic, payload)
+    
+    # Update coordinator data
+    coordinator.data[CONF_REPORT_MODE] = new_mode
+    
+    # Update config entry data
+    new_data = dict(config_entry.data)
+    new_data[CONF_REPORT_MODE] = new_mode
+    hass.config_entries.async_update_entry(config_entry, data=new_data)
+    
+    # Refresh coordinator to update all entities
+    await coordinator.async_request_refresh()
+    
+    _LOGGER.info(f"[{mac}] Auto-switched to {mode_name} based on battery state (timeout: {'5min' if is_charging else '15min'})")
+    
 async def publish_setting_change(hass: HomeAssistant, mac: str, setting_key: str, value: any) -> None:
     """Publish a single setting change to the device with debounce."""
     # Cancel any pending publish for this setting
@@ -151,7 +202,7 @@ async def _update_settings_from_device(hass: HomeAssistant, config_entry: Config
             except (ValueError, TypeError) as err:
                 _LOGGER.error("Failed to convert setting %s with value %s: %s", device_key, value, err)
         else:
-            _LOGGER.warning("Unknown setting key from device: %s", device_key)
+            _LOGGER.debug("Unknown setting key from device: %s", device_key)
     
     # Refresh coordinator to update all entities
     if updated:
@@ -159,6 +210,56 @@ async def _update_settings_from_device(hass: HomeAssistant, config_entry: Config
         await coordinator.async_request_refresh()
     else:
         _LOGGER.info("No settings were updated")
+
+
+async def _send_initial_tlv_config(hass, config_entry, mac, model):
+    """Send initial default configuration to TLV device on first setup."""
+    from .tlv_encoder import tlv_encode, int_to_bytes_little_endian
+    from .const import (
+        CONF_REPORT_MODE, REPORT_MODE_REALTIME, CONF_REPORT_INTERVAL, 
+        CONF_SAMPLE_INTERVAL, CONF_TEMPERATURE_UNIT
+    )
+    
+    # Check if this is first time setup (no report mode set yet)
+    if CONF_REPORT_MODE in config_entry.data:
+        _LOGGER.info(f"[{mac}] Device already configured, skipping initial config")
+        return
+    
+    _LOGGER.info(f"[{mac}] Sending initial default configuration to new TLV device")
+    
+    # Get Home Assistant's native temperature unit
+    native_temp_unit = hass.config.units.temperature_unit
+    temp_unit = "fahrenheit" if native_temp_unit == UnitOfTemperature.FAHRENHEIT else "celsius"
+    
+    # Set default values in config entry
+    new_data = dict(config_entry.data)
+    new_data[CONF_REPORT_MODE] = REPORT_MODE_REALTIME  # Real-time by default
+    new_data[CONF_REPORT_INTERVAL] = 10  # 10 minutes (minimum)
+    new_data[CONF_SAMPLE_INTERVAL] = 60  # 60 seconds
+    new_data[CONF_TEMPERATURE_UNIT] = temp_unit
+    
+    # Add CO2 work interval for CGP22C
+    if model == "CGP22C":
+        new_data["co2_work_interval"] = 10  # 10 minutes
+    
+    hass.config_entries.async_update_entry(config_entry, data=new_data)
+    
+    # Send default configuration commands
+    packets = {
+        0x42: int_to_bytes_little_endian(21600, 2),  # Real-time for 6 hours
+        0x19: bytes([1 if temp_unit == "fahrenheit" else 0])  # Temperature unit
+    }
+    
+    # Add CO2 work interval for CGP22C
+    if model == "CGP22C":
+        packets[0x3C] = int_to_bytes_little_endian(10, 2)
+    
+    payload = tlv_encode(0x32, packets)
+    topic = f"qingping/{mac}/down"
+    
+    await mqtt.async_publish(hass, topic, payload)
+    _LOGGER.info(f"[{mac}] Initial config sent: Real-time mode, temp unit: {temp_unit}")
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -171,6 +272,12 @@ async def async_setup_entry(
     model = config_entry.data[CONF_MODEL]
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     native_temp_unit = hass.config.units.temperature_unit
+    
+    # Initialize coordinator data with default values to prevent "None" warnings
+    if model == "CGS1" and CONF_TVOC_UNIT not in coordinator.data:
+        coordinator.data[CONF_TVOC_UNIT] = config_entry.data.get(CONF_TVOC_UNIT, "ppb")
+    elif model == "CGS2" and CONF_ETVOC_UNIT not in coordinator.data:
+        coordinator.data[CONF_ETVOC_UNIT] = config_entry.data.get(CONF_ETVOC_UNIT, "index")
 
     async def async_update_data():
         """Fetch data from API endpoint."""
@@ -187,31 +294,64 @@ async def async_setup_entry(
 
     status_sensor = QingpingCGSxStatusSensor(coordinator, config_entry, mac, name, device_info)
     firmware_sensor = QingpingCGSxFirmwareSensor(coordinator, config_entry, mac, name, device_info)
-    type_sensor = QingpingCGSxTypeSensor(coordinator, config_entry, mac, name, device_info)
     mac_sensor = QingpingCGSxMACSensor(coordinator, config_entry, mac, name, device_info)
     battery_state = QingpingCGSxBatteryStateSensor(coordinator, config_entry, mac, name, device_info)
 
-    sensors = [
-        status_sensor,
-        firmware_sensor,
-        type_sensor,
-        mac_sensor,
-        battery_state,
-        QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_BATTERY, "Battery", PERCENTAGE, SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT, device_info),
-        QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_CO2, "CO2", PPM, SensorDeviceClass.CO2, SensorStateClass.MEASUREMENT, device_info),
-        QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_HUMIDITY, "Humidity", PERCENTAGE, SensorDeviceClass.HUMIDITY, SensorStateClass.MEASUREMENT, device_info),
-        QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_PM10, "PM10", CONCENTRATION, SensorDeviceClass.PM10, SensorStateClass.MEASUREMENT, device_info),
-        QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_PM25, "PM25", CONCENTRATION, SensorDeviceClass.PM25, SensorStateClass.MEASUREMENT, device_info),
-        QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_TEMPERATURE, "Temperature", native_temp_unit, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, device_info),
+    # Only create type_sensor for JSON devices (not TLV)
+    if model in JSON_MODELS:
+        type_sensor = QingpingCGSxTypeSensor(coordinator, config_entry, mac, name, device_info)
+        sensors = [
+            status_sensor,
+            firmware_sensor,
+            type_sensor,
+            mac_sensor,
+            battery_state,
+        ]
+    else:
+        # TLV devices - no type sensor
+        sensors = [
+            status_sensor,
+            firmware_sensor,
+            mac_sensor,
+            battery_state,
+        ]
 
-    ]
+    #sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_BATTERY, "Battery", PERCENTAGE, SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT, device_info))
+    if model in ["CGS1", "CGS2", "CGDN1", "CGP22C", "CGP22W", "CGP23W"]:
+        sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_BATTERY, "Battery", PERCENTAGE, SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT, device_info))
+    sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_TEMPERATURE, "Temperature", native_temp_unit, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, device_info))
+    sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_HUMIDITY, "Humidity", PERCENTAGE, SensorDeviceClass.HUMIDITY, SensorStateClass.MEASUREMENT, device_info))
+
+    
+    # Add CO2 for models that have it
+    if model in ["CGS1", "CGS2", "CGDN1", "CGP22C", "CGR1AD"]:
+        sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_CO2, "CO2", PPM, SensorDeviceClass.CO2, SensorStateClass.MEASUREMENT, device_info))
+    
+    # Add PM sensors only for models that have them
+    if model in ["CGS1", "CGS2", "CGDN1", "CGR1AD"]:
+        sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_PM10, "PM10", CONCENTRATION, SensorDeviceClass.PM10, SensorStateClass.MEASUREMENT, device_info))
+        sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_PM25, "PM25", CONCENTRATION, SensorDeviceClass.PM25, SensorStateClass.MEASUREMENT, device_info))
+        
+
+
 
     if model == "CGS1":
         sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_TVOC, "TVOC", PPB, SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS, SensorStateClass.MEASUREMENT, device_info))
     elif model == "CGS2":
         sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_ETVOC, "eTVOC", None, SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS, SensorStateClass.MEASUREMENT, device_info))
         sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_NOISE, "Noise", DB, SensorDeviceClass.SOUND_PRESSURE, SensorStateClass.MEASUREMENT, device_info))
-    # CGDN1 has the same sensors as CGS1 (no TVOC, no Noise)
+    elif model == "CGP23W":  # NEW
+        sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_PRESSURE, "Pressure", "kPa", SensorDeviceClass.PRESSURE, SensorStateClass.MEASUREMENT, device_info))
+    elif model == "CGR1AD":  # NEW
+        sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_LIGHT, "Light", "lx", SensorDeviceClass.ILLUMINANCE, SensorStateClass.MEASUREMENT, device_info))
+        sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_TLV_ETVOC, "eTVOC", None, SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS, SensorStateClass.MEASUREMENT, device_info))
+        sensors.append(QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_NOISE, "Noise", DB, SensorDeviceClass.SOUND_PRESSURE, SensorStateClass.MEASUREMENT, device_info))
+    
+    # Add signal strength for TLV devices
+    if model in TLV_MODELS:
+        signal_sensor = QingpingCGSxSensor(coordinator, config_entry, mac, name, SENSOR_SIGNAL_STRENGTH, "Signal Strength", "dBm", SensorDeviceClass.SIGNAL_STRENGTH, SensorStateClass.MEASUREMENT, device_info)
+        signal_sensor._attr_entity_category = EntityCategory.DIAGNOSTIC
+        sensors.append(signal_sensor)
 
     async_add_entities(sensors)
 
@@ -219,11 +359,21 @@ async def async_setup_entry(
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN].setdefault(config_entry.entry_id, {})
     hass.data[DOMAIN][config_entry.entry_id]["sensors"] = sensors
+    
+    # Send initial configuration for new TLV devices
+    if model in TLV_MODELS:
+        await _send_initial_tlv_config(hass, config_entry, mac, model)
 
     @callback
     def message_received(message):
         """Handle new MQTT messages."""
         try:
+            # Check if TLV binary format
+            if is_tlv_format(message.payload):
+                _handle_tlv_message(message)
+                return
+            
+            # Otherwise handle as JSON
             payload = json.loads(message.payload)
             
             if not isinstance(payload, dict):
@@ -281,7 +431,8 @@ async def async_setup_entry(
                 _LOGGER.debug("No valid sensorData in payload, possibly a config response or device just powered on")
                 # Device is online, just waiting for sensor data
                 return
-            if len(sensor_data) == 1:
+            #if len(sensor_data) == 1:
+            if message_type not in [17, 13, "17", "13"]:
                 #ignore type 17 sensor data                
                 for data in sensor_data:
                     battery_charging = None
@@ -328,8 +479,124 @@ async def async_setup_entry(
         except Exception as e:
             _LOGGER.error("Error processing MQTT message: %s", str(e))
 
+    def _handle_tlv_message(message):
+        """Handle TLV binary format messages."""
+        try:
+            cmd = message.payload[2] if len(message.payload) > 2 else 0
+            # Map CMD codes to descriptions for logging
+            cmd_names = {
+                0x31: "Unknown/Reserved",
+                0x32: "Configuration",
+                0x34: "Event Reporting",
+                0x35: "Button Press",
+                0x39: "Configuration Query",
+                0x41: "Current Reading",
+                0x42: "Historical Data",
+                0x43: "Regular Data",
+                0x47: "Server Config Push",
+            }
+            cmd_name = cmd_names.get(cmd, "Unknown")
+            _LOGGER.debug(f"[TLV] Received CMD: 0x{cmd:02x} ({cmd_name})")
+
+            decoded = tlv_decode(message.payload)
+            if not decoded:
+                return
+            
+            # Update status
+            current_timestamp = int(time.time())
+            if status_sensor.hass:
+                status_sensor.update_timestamp(current_timestamp)
+            
+            # Update firmware
+            if "version" in decoded and firmware_sensor.hass:
+                firmware_sensor.update_version(decoded["version"])
+            
+            # Update MAC
+            if mac_sensor.hass:
+                mac_sensor.update_mac(mac)
+            
+            # Update battery state and auto-switch report mode
+            if "batteryCharging" in decoded and battery_state.hass:
+                new_charging_state = decoded["batteryCharging"]
+                old_charging_state = battery_state._attr_native_value == "Charging"
+                
+                battery_state.update_battery_state(1 if new_charging_state else 0)
+                
+                # Auto-switch report mode if charging state changed
+                if new_charging_state != old_charging_state:
+                    _LOGGER.info(f"[{mac}] Battery charging state changed: {old_charging_state} -> {new_charging_state}")
+                    asyncio.create_task(
+                        _auto_switch_report_mode_on_battery_state(
+                            hass, config_entry, mac, new_charging_state, model
+                        )
+                    )
+            
+            # Process sensor data
+            sensor_data = decoded.get("sensorData", [])
+            if not sensor_data:
+                return
+            
+            # IMPORTANT: Prioritize current data based on CMD type
+            # CMD 0x41 = current reading (use first/only entry)
+            # CMD 0x42 = historical data (use LAST entry which is most recent)
+            # CMD 0x43 = real-time data (use first/only entry)
+            if cmd == 0x42 and isinstance(sensor_data, list) and len(sensor_data) > 1:
+                # For historical data (CMD 0x42), use the LAST (most recent) reading
+                data = sensor_data[-1]
+                _LOGGER.debug(f"[TLV] CMD 0x42: Using most recent historical data (entry {len(sensor_data)} of {len(sensor_data)})")
+            else:
+                # For current/real-time data, use first entry
+                data = sensor_data[0] if isinstance(sensor_data, list) else sensor_data
+            
+            # Update sensors
+            for sensor in sensors[4:]:
+                if not sensor.hass:
+                    continue
+                
+                value = None
+                if sensor._sensor_type == SENSOR_TEMPERATURE and "temperature" in data:
+                    value = data["temperature"]
+                elif sensor._sensor_type == SENSOR_HUMIDITY and "humidity" in data:
+                    value = data["humidity"]
+                elif sensor._sensor_type == SENSOR_CO2 and "co2" in data:
+                    value = data["co2"]
+                elif sensor._sensor_type == SENSOR_PM25 and "pm25" in data:
+                    value = data["pm25"]
+                elif sensor._sensor_type == SENSOR_PM10 and "pm10" in data:
+                    value = data["pm10"]
+                elif sensor._sensor_type == SENSOR_TVOC and "tvoc" in data:
+                    value = data["tvoc"]
+                elif sensor._sensor_type == SENSOR_TLV_ETVOC and "tvoc" in data:
+                    value = data["tvoc"]
+                elif sensor._sensor_type == SENSOR_NOISE and "noise" in data:
+                    value = data["noise"]
+                elif sensor._sensor_type == SENSOR_LIGHT and "light" in data:
+                    value = data["light"]
+                elif sensor._sensor_type == SENSOR_PRESSURE and "pressure" in data:
+                    value = data["pressure"]
+                elif sensor._sensor_type == SENSOR_BATTERY:
+                    # Battery can be in decoded (top level) or data (sensorData)
+                    if "battery" in decoded:
+                        value = decoded["battery"]
+                    elif "battery" in data:
+                        value = data["battery"]
+                    if decoded.get("batteryCharging") or data.get("batteryCharging"):
+                        sensor.update_battery_charging(True)
+                elif sensor._sensor_type == SENSOR_SIGNAL_STRENGTH:
+                    # Signal can be signalStrength (top) or rssi (sensorData)
+                    if "signalStrength" in decoded:
+                        value = decoded["signalStrength"]
+                    elif "rssi" in data:
+                        value = data["rssi"]
+                
+                if value is not None:
+                    sensor.update_from_latest_data(value)
+        
+        except Exception as e:
+            _LOGGER.error("Error processing TLV message: %s", str(e))
+
     await mqtt.async_subscribe(
-        hass, f"{MQTT_TOPIC_PREFIX}/{mac}/up", message_received, 1
+        hass, f"{MQTT_TOPIC_PREFIX}/{mac}/up", message_received, 1, encoding=None
     )
     _LOGGER.info("Subscribed to MQTT topic: %s/%s/up", MQTT_TOPIC_PREFIX, mac)
 
@@ -390,16 +657,28 @@ class QingpingCGSxStatusSensor(CoordinatorEntity, SensorEntity):
         """Update the status based on the last timestamp."""
         if not self.hass:
             return
-            
+        
+        # Get model and report mode to determine timeout
+        model = self._config_entry.data.get(CONF_MODEL, "CGS1")
+        
+        # Determine timeout based on device type and mode
+        if model in TLV_MODELS:
+            report_mode = self.coordinator.data.get(CONF_REPORT_MODE, REPORT_MODE_HISTORIC)
+            timeout = OFFLINE_TIMEOUT_REALTIME if report_mode == REPORT_MODE_REALTIME else OFFLINE_TIMEOUT_HISTORIC
+        else:
+            # JSON devices use standard timeout
+            timeout = OFFLINE_TIMEOUT_REALTIME
+        
         current_time = int(time.time())
         time_since_last_msg = current_time - self._last_timestamp
-        new_status = "online" if time_since_last_msg <= OFFLINE_TIMEOUT else "offline"
+        new_status = "online" if time_since_last_msg <= timeout else "offline"
+        
         if self._attr_native_value != new_status:
             old_status = self._attr_native_value
             self._attr_native_value = new_status
             self.async_write_ha_state()
-            _LOGGER.info("Device %s status changed from %s to %s (time since last message: %s seconds)", 
-                        self._mac, old_status, new_status, time_since_last_msg)
+            _LOGGER.info("Device %s status changed from %s to %s (time since last message: %s seconds, timeout: %s)", 
+                        self._mac, old_status, new_status, time_since_last_msg, timeout)
             
             # Update other sensors' availability
             sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
@@ -497,6 +776,8 @@ class QingpingCGSxBatteryStateSensor(CoordinatorEntity, SensorEntity):
     @callback
     def update_battery_state(self, status):
         """Update the battery state."""
+        self._previous_charging_state = (self._attr_native_value == "Charging")
+        
         if status == 1:
             self._attr_native_value = "Charging"
         elif status == 2:
@@ -529,6 +810,19 @@ class QingpingCGSxTypeSensor(CoordinatorEntity, SensorEntity):
         self._attr_native_value = device_type
         self.async_write_ha_state()
 
+
+def _get_voc_device_class(unit: str) -> SensorDeviceClass:
+    """Get appropriate device class for VOC sensor based on unit."""
+    if unit == "index":
+        return SensorDeviceClass.AQI  # Air Quality Index
+    elif unit in ["ppb", "ppm"]:
+        return SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS
+    elif unit == "mg/m³":
+        return SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS
+    else:
+        return SensorDeviceClass.VOLATILE_ORGANIC_COMPOUNDS_PARTS  # default
+
+
 class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
     """Representation of a Qingping CGSx sensor."""
 
@@ -552,7 +846,6 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
         """Update the sensor with the latest data."""
         try:
             if self._sensor_type == SENSOR_TEMPERATURE:
-                offset = self.coordinator.data.get(CONF_TEMPERATURE_OFFSET, 0)
                 temp_celsius = float(value)
                 if self._attr_native_unit_of_measurement == UnitOfTemperature.FAHRENHEIT:
                     # Convert to Fahrenheit
@@ -561,10 +854,52 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
                 else:
                     self._attr_native_value = round(float(temp_celsius), 1)
             elif self._sensor_type == SENSOR_HUMIDITY:
-                offset = self.coordinator.data.get(CONF_HUMIDITY_OFFSET, 0)
                 self._attr_native_value = round(float(value), 1)
+            elif self._sensor_type == SENSOR_PRESSURE:
+                self._attr_native_value = round(float(value), 2)
+            elif self._sensor_type == SENSOR_TLV_ETVOC or self._sensor_type == SENSOR_TVOC:
+                model = self._config_entry.data.get(CONF_MODEL)    
+                if model == "CGS1":
+                    # CGS1 JSON device - uses TVOC with ppb/ppm/mg/m³
+                    tvoc_unit = self.coordinator.data.get(CONF_TVOC_UNIT, "ppb")
+                    if tvoc_unit and tvoc_unit != self._attr_native_unit_of_measurement:
+                        old_unit = self._attr_native_unit_of_measurement
+                        current_value = self._attr_native_value 
+                    if tvoc_unit is None or tvoc_unit == "":
+                        tvoc_unit = "ppb"
+                    tvoc_value = int(value)
+                    if tvoc_unit == "ppm":
+                        tvoc_value /= 1000
+                    elif tvoc_unit == "mg/m³":
+                        tvoc_value /= 218.77
+                    self._attr_native_value = round(tvoc_value, 3)
+                    self._attr_native_unit_of_measurement = tvoc_unit
+                    self._attr_device_class = _get_voc_device_class(tvoc_unit)
+                else:
+                    # TLV devices (CGR1AD) - uses eTVOC with index/ppb/mg/m³
+                    etvoc_unit = self.coordinator.data.get(CONF_ETVOC_UNIT, "index")
+                    if etvoc_unit and etvoc_unit != self._attr_native_unit_of_measurement:
+                        old_unit = self._attr_native_unit_of_measurement
+                        current_value = self._attr_native_value                         
+                    etvoc_value = int(value)
+                    if etvoc_unit == "ppb":
+                        # Convert VOC index to ppb
+                        etvoc_value = (math.log(501-etvoc_value) - 6.24) * -2215.4
+                        etvoc_value = int(round(float(etvoc_value), 0))
+                    elif etvoc_unit == "mg/m³":
+                        # Convert VOC index to mg/m³
+                        etvoc_value = (math.log(501-etvoc_value) - 6.24) * -2215.4
+                        etvoc_value = (etvoc_value*4.5*10 + 5) / 10 / 1000
+                        etvoc_value = round(etvoc_value, 3)
+                    self._attr_native_value = etvoc_value
+                    # Set unit to None if "index" is selected (no unit), otherwise use the unit
+                    self._attr_native_unit_of_measurement = None if etvoc_unit == "index" else etvoc_unit
+                    self._attr_device_class = _get_voc_device_class(etvoc_unit)
             elif self._sensor_type == SENSOR_ETVOC:
                 etvoc_unit = self.coordinator.data.get(CONF_ETVOC_UNIT, "index")
+                if etvoc_unit and etvoc_unit != self._attr_native_unit_of_measurement:
+                    old_unit = self._attr_native_unit_of_measurement
+                    current_value = self._attr_native_value
                 etvoc_value = int(value)
                 if etvoc_unit == "ppb":
                     # Convert VOC index to ppb (this is an approximate conversion)
@@ -577,19 +912,9 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
                     etvoc_value = (etvoc_value*4.5*10 + 5) / 10 / 1000
                     etvoc_value = round(etvoc_value, 3)
                 self._attr_native_value = etvoc_value
-                self._attr_native_unit_of_measurement = etvoc_unit
-            elif self._sensor_type == SENSOR_TVOC:
-                tvoc_unit = self.coordinator.data.get(CONF_TVOC_UNIT, "ppb")
-                tvoc_value = int(value)
-                if tvoc_unit == "ppm":
-                    tvoc_value /= 1000
-                elif tvoc_unit == "mg/m³":
-                    tvoc_value /= 218.77
-                    # tvoc_value /= 1000 
-                    # tvoc_value *= 0.0409 
-                    # tvoc_value *= 111.1  # Approximate conversion factor
-                self._attr_native_value = round(tvoc_value, 3)
-                self._attr_native_unit_of_measurement = tvoc_unit
+                # Set unit to None if "index" is selected (no unit), otherwise use the unit
+                self._attr_native_unit_of_measurement = None if etvoc_unit == "index" else etvoc_unit
+                self._attr_device_class = _get_voc_device_class(etvoc_unit)
             else:
                 self._attr_native_value = int(value)
             self._is_unavailable = False
@@ -644,21 +969,42 @@ class QingpingCGSxSensor(CoordinatorEntity, SensorEntity):
     async def publish_config(self):
         """Publish configuration message to MQTT."""
         update_interval = self.coordinator.data.get(CONF_UPDATE_INTERVAL, 15)
-        payload = {
-            ATTR_TYPE: DEFAULT_TYPE,
-            ATTR_UP_ITVL: f"{int(update_interval)}",
-            ATTR_DURATION: DEFAULT_DURATION
-        }
         topic = f"{MQTT_TOPIC_PREFIX}/{self._mac}/down"
+        
+        # Check if TLV device
+        model = self._config_entry.data.get(CONF_MODEL, "CGS1")
+        if model in TLV_MODELS:
+            # Use TLV binary format (CMD 0x32)
+            # TLV devices use report mode instead of numeric interval
+            report_mode = self._config_entry.data.get(CONF_REPORT_MODE, REPORT_MODE_HISTORIC)
+            
+            packets = {}
+            
+            if report_mode == REPORT_MODE_REALTIME:
+                # Real-time mode: Enable real-time for 6 hours
+                packets[0x42] = int_to_bytes_little_endian(21600, 2)
+                _LOGGER.info(f"[{self._mac}] TLV config: REAL-TIME mode (fast updates, drains battery)")
+            else:
+                # Historic mode: Disable real-time
+                packets[0x42] = int_to_bytes_little_endian(0, 2)
+                _LOGGER.info(f"[{self._mac}] TLV config: HISTORIC mode (slow updates, saves battery)")
+            
+            payload = tlv_encode(0x32, packets)
+        else:
+            # Use JSON format for old devices (CGS1, CGS2, CGDN1)
+            payload = json.dumps({
+                ATTR_TYPE: DEFAULT_TYPE,
+                ATTR_UP_ITVL: f"{int(update_interval)}",
+                ATTR_DURATION: DEFAULT_DURATION
+            })
 
         for attempt in range(MQTT_PUBLISH_RETRY_LIMIT):
             if not await ensure_mqtt_connected(self.hass):
-                _LOGGER.error("MQTT is not connected after multiple attempts")
+                _LOGGER.error("MQTT is not connected")
                 return
-
             try:
-                await mqtt.async_publish(self.hass, topic, json.dumps(payload))
-                _LOGGER.info(f"Published config to {topic}: {payload}")
+                await mqtt.async_publish(self.hass, topic, payload)
+                _LOGGER.info(f"Published config to {topic}")
                 return
             except HomeAssistantError as err:
                 _LOGGER.warning(f"Failed to publish config (attempt {attempt + 1}): {err}")

@@ -17,6 +17,7 @@ from .const import (
     CONF_CO2_OFFSET, CONF_PM25_OFFSET, CONF_PM10_OFFSET,
     CONF_NOISE_OFFSET, CONF_TVOC_OFFSET, CONF_TVOC_INDEX_OFFSET, CONF_PRESSURE_OFFSET,
     CONF_POWER_OFF_TIME, CONF_AUTO_SLIDING_TIME, DEFAULT_SENSOR_OFFSET,
+    CONF_SCREENSAVER_TYPE, CONF_TIMEZONE,
     TLV_MODELS, JSON_MODELS
 )
 from .tlv_encoder import tlv_encode, int_to_bytes_little_endian
@@ -188,12 +189,9 @@ async def async_setup_entry(
 
         if model == "CGDN1":
             entities.extend([
-                QingpingCGSxPowerOffTimeNumber(
-                    coordinator, config_entry, mac, name, device_info
-                ),
-                QingpingCGSxAutoSlidingTimeNumber(
-                    coordinator, config_entry, mac, name, device_info
-                ),
+                QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Power Off Time", CONF_POWER_OFF_TIME, device_info, 0, 1440, 1, 0, "minutes", NumberMode.BOX),
+                QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Auto Sliding Time", CONF_AUTO_SLIDING_TIME, device_info, 0, 60, 1, 30, "seconds", NumberMode.BOX),
+                QingpingCGSxTimezoneNumber(coordinator, config_entry, mac, name, device_info),
             ])
 
     async_add_entities(entities)
@@ -683,43 +681,46 @@ class QingpingCGSxSensorOffsetNumber(CoordinatorEntity, NumberEntity):
         self.async_write_ha_state()
 
 
-class QingpingCGSxPowerOffTimeNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGDN1 power off time number input."""
+class QingpingCGSxTimeNumber(CoordinatorEntity, NumberEntity):
+    """Representation of a Qingping CGSx time setting number input."""
 
-    def __init__(self, coordinator, config_entry, mac, name, device_info):
-        """Initialize the number input."""
+    def __init__(self, coordinator, config_entry, mac, name, time_name, time_key, device_info, min_val, max_val, step, default_val, unit, mode=NumberMode.BOX):
+        """Initialize the number entity."""
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._mac = mac
-        self._attr_name = f"{name} Power Off Time"
-        self._attr_unique_id = f"{mac}_power_off_time"
+        self._time_key = time_key
+        self._default_val = default_val
+        self._attr_name = f"{name} {time_name}"
+        self._attr_unique_id = f"{mac}_{time_key}"
         self._attr_device_info = device_info
-        self._attr_native_min_value = 0
-        self._attr_native_max_value = 1440
-        self._attr_native_step = 1
-        self._attr_native_unit_of_measurement = "min"
-        self._attr_mode = NumberMode.BOX
+        self._attr_native_min_value = min_val
+        self._attr_native_max_value = max_val
+        self._attr_native_step = step
         self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_native_unit_of_measurement = unit
+        self._attr_mode = mode
 
     @property
     def native_value(self) -> int:
         """Return the current value."""
-        return self.coordinator.data.get(CONF_POWER_OFF_TIME, 0)
+        return self.coordinator.data.get(self._time_key, self._default_val)
 
-    async def async_set_native_value(self, value: float) -> None:
-        """Update the value."""
-        int_value = int(value)
-        self.coordinator.data[CONF_POWER_OFF_TIME] = int_value
+    async def async_set_native_value(self, value: int) -> None:
+        """Update the current value."""
+        self.coordinator.data[self._time_key] = value
         self.async_write_ha_state()
-
+        
+        # Update config entry
         new_data = dict(self._config_entry.data)
-        new_data[CONF_POWER_OFF_TIME] = int_value
+        new_data[self._time_key] = value
         self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-
+        
         await self.coordinator.async_request_refresh()
-
+        
+        # Publish setting change to device
         from .sensor import publish_setting_change
-        await publish_setting_change(self.hass, self._mac, CONF_POWER_OFF_TIME, int_value)
+        await publish_setting_change(self.hass, self._mac, self._time_key, int(value))
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
@@ -729,48 +730,48 @@ class QingpingCGSxPowerOffTimeNumber(CoordinatorEntity, NumberEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if CONF_POWER_OFF_TIME not in self.coordinator.data:
-            self.coordinator.data[CONF_POWER_OFF_TIME] = self._config_entry.data.get(CONF_POWER_OFF_TIME, 0)
+        if self._time_key not in self.coordinator.data:
+            self.coordinator.data[self._time_key] = self._config_entry.data.get(self._time_key, self._default_val)
         self.async_write_ha_state()
 
-
-class QingpingCGSxAutoSlidingTimeNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGDN1 auto sliding time number input."""
+class QingpingCGSxTimezoneNumber(CoordinatorEntity, NumberEntity):
+    """Representation of a Qingping CGSx timezone setting number input."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
-        """Initialize the number input."""
+        """Initialize the number entity."""
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._mac = mac
-        self._attr_name = f"{name} Auto Sliding Time"
-        self._attr_unique_id = f"{mac}_auto_sliding_time"
+        self._attr_name = f"{name} Time Zone"
+        self._attr_unique_id = f"{mac}_timezone"
         self._attr_device_info = device_info
-        self._attr_native_min_value = 0
-        self._attr_native_max_value = 60
-        self._attr_native_step = 1
-        self._attr_native_unit_of_measurement = "s"
-        self._attr_mode = NumberMode.BOX
+        self._attr_native_min_value = -12
+        self._attr_native_max_value = 14
+        self._attr_native_step = 0.5
         self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_mode = NumberMode.BOX
 
     @property
-    def native_value(self) -> int:
+    def native_value(self) -> float:
         """Return the current value."""
-        return self.coordinator.data.get(CONF_AUTO_SLIDING_TIME, 0)
+        return self.coordinator.data.get(CONF_TIMEZONE, 0)
 
     async def async_set_native_value(self, value: float) -> None:
-        """Update the value."""
-        int_value = int(value)
-        self.coordinator.data[CONF_AUTO_SLIDING_TIME] = int_value
+        """Update the current value."""
+        self.coordinator.data[CONF_TIMEZONE] = value
         self.async_write_ha_state()
-
+        
+        # Update config entry
         new_data = dict(self._config_entry.data)
-        new_data[CONF_AUTO_SLIDING_TIME] = int_value
+        new_data[CONF_TIMEZONE] = value
         self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-
+        
         await self.coordinator.async_request_refresh()
-
+        
+        # Publish setting change to device (value * 10 for device)
         from .sensor import publish_setting_change
-        await publish_setting_change(self.hass, self._mac, CONF_AUTO_SLIDING_TIME, int_value)
+        device_value = int(value * 10)
+        await publish_setting_change(self.hass, self._mac, CONF_TIMEZONE, device_value)
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
@@ -780,6 +781,6 @@ class QingpingCGSxAutoSlidingTimeNumber(CoordinatorEntity, NumberEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if CONF_AUTO_SLIDING_TIME not in self.coordinator.data:
-            self.coordinator.data[CONF_AUTO_SLIDING_TIME] = self._config_entry.data.get(CONF_AUTO_SLIDING_TIME, 0)
+        if CONF_TIMEZONE not in self.coordinator.data:
+            self.coordinator.data[CONF_TIMEZONE] = self._config_entry.data.get(CONF_TIMEZONE, 0)
         self.async_write_ha_state()

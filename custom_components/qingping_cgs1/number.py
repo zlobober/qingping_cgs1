@@ -1,7 +1,8 @@
-"""Support for Qingping CGSx offset number inputs."""
+"""Support for Qingping CGSx number entities."""
 from __future__ import annotations
 
 from homeassistant.components.number import NumberEntity, NumberMode
+from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME, CONF_MAC, CONF_MODEL, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
@@ -10,14 +11,15 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
-    DOMAIN, CONF_TEMPERATURE_OFFSET, CONF_HUMIDITY_OFFSET, DEFAULT_OFFSET, 
+    DOMAIN, CONF_TEMPERATURE_OFFSET, CONF_HUMIDITY_OFFSET, DEFAULT_OFFSET,
     CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL,
-    CONF_CO2_OFFSET, CONF_PM25_OFFSET, CONF_PM10_OFFSET, 
-    CONF_NOISE_OFFSET, CONF_TVOC_OFFSET, CONF_TVOC_INDEX_OFFSET,
-    CONF_POWER_OFF_TIME,
-    CONF_AUTO_SLIDING_TIME, CONF_SCREENSAVER_TYPE, CONF_TIMEZONE,
-    DEFAULT_SENSOR_OFFSET
+    CONF_REPORT_INTERVAL, CONF_SAMPLE_INTERVAL,
+    CONF_CO2_OFFSET, CONF_PM25_OFFSET, CONF_PM10_OFFSET,
+    CONF_NOISE_OFFSET, CONF_TVOC_OFFSET, CONF_TVOC_INDEX_OFFSET, CONF_PRESSURE_OFFSET,
+    CONF_POWER_OFF_TIME, CONF_AUTO_SLIDING_TIME, DEFAULT_SENSOR_OFFSET,
+    TLV_MODELS, JSON_MODELS
 )
+from .tlv_encoder import tlv_encode, int_to_bytes_little_endian
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -30,10 +32,6 @@ async def async_setup_entry(
     model = config_entry.data[CONF_MODEL]
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
     native_temp_unit = hass.config.units.temperature_unit
-    if native_temp_unit == UnitOfTemperature.FAHRENHEIT:
-            step = 0.1
-    else:
-            step = 1
 
     device_info = {
         "identifiers": {(DOMAIN, mac)},
@@ -42,35 +40,468 @@ async def async_setup_entry(
         "model": model,
     }
 
-    entities = [
-        QingpingCGSxOffsetNumber(coordinator, config_entry, mac, name, "Temp Offset", CONF_TEMPERATURE_OFFSET, device_info, native_temp_unit, step),
-        QingpingCGSxOffsetNumber(coordinator, config_entry, mac, name, "Humidity Offset", CONF_HUMIDITY_OFFSET, device_info, "%", step),
-        QingpingCGSxUpdateIntervalNumber(coordinator, config_entry, mac, name, device_info),
-        QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "CO2 Offset", CONF_CO2_OFFSET, device_info, "ppm"),
-        QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "PM2.5 Offset", CONF_PM25_OFFSET, device_info, "µg/m³"),
-        QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "PM10 Offset", CONF_PM10_OFFSET, device_info, "µg/m³"),
-    ]
+    entities = []
 
-    # Add model-specific entities
-    if model == "CGS1":
+    # TLV devices (CGP22C, CGP23W, CGP22W, CGR1AD)
+    if model in TLV_MODELS:
+        # Report and Sample intervals (for historic mode)
         entities.append(
-            QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "TVOC Offset", CONF_TVOC_OFFSET, device_info, "%")
+            QingpingTLVReportIntervalNumber(
+                coordinator, config_entry, mac, name, device_info
+            )
         )
-    elif model == "CGS2":
+        entities.append(
+            QingpingTLVSampleIntervalNumber(
+                coordinator, config_entry, mac, name, device_info
+            )
+        )
+        
+        # Temperature offset - use native temperature unit
+        if native_temp_unit == UnitOfTemperature.FAHRENHEIT:
+            temp_min, temp_max = -18.0, 18.0  # About -10°C to +10°C in Fahrenheit
+            temp_step = 0.2
+        else:
+            temp_min, temp_max = -10.0, 10.0
+            temp_step = 0.1
+            
+        entities.append(
+            QingpingTLVOffsetNumber(
+                coordinator, config_entry, mac, name, "Temperature Offset",
+                CONF_TEMPERATURE_OFFSET, device_info, 0x46,
+                temp_min, temp_max, temp_step, native_temp_unit
+            )
+        )
+        # Humidity offset
+        entities.append(
+            QingpingTLVOffsetNumber(
+                coordinator, config_entry, mac, name, "Humidity Offset",
+                CONF_HUMIDITY_OFFSET, device_info, 0x48,
+                -20.0, 20.0, 0.1, "%"
+            )
+        )
+        # CO2 offset (only for models with CO2)
+        if model in ["CGP22C", "CGR1AD"]:
+            entities.append(
+                QingpingTLVOffsetNumber(
+                    coordinator, config_entry, mac, name, "CO2 Offset",
+                    CONF_CO2_OFFSET, device_info, 0x45,
+                    -500, 500, 1, "ppm"
+                )
+            )
+        
+        # Pressure offset (only for CGP23W)
+        if model == "CGP23W":
+            entities.append(
+                QingpingTLVOffsetNumber(
+                    coordinator, config_entry, mac, name, "Pressure Offset",
+                    CONF_PRESSURE_OFFSET, device_info, 0x31,
+                    -10.0, 10.0, 0.1, "kPa"
+                )
+            )
+        
+        # PM2.5 and PM10 offsets (for CGR1AD)
+        if model == "CGR1AD":
+            entities.append(
+                QingpingTLVOffsetNumber(
+                    coordinator, config_entry, mac, name, "PM2.5 Offset",
+                    CONF_PM25_OFFSET, device_info, 0x4B,
+                    -500, 500, 1, "µg/m³"
+                )
+            )
+            entities.append(
+                QingpingTLVOffsetNumber(
+                    coordinator, config_entry, mac, name, "PM10 Offset",
+                    CONF_PM10_OFFSET, device_info, 0x4D,
+                    -500, 500, 1, "µg/m³"
+                )
+            )
+        # Power off time
+        if model == "CGP22C":
+            entities.append(
+                QingpingTLVPowerOffTimeNumber(
+                    coordinator, config_entry, mac, name, device_info
+                )
+            )        
+            # CO2 work interval (only for CGP22C with CO2 sensor)        
+            entities.append(
+                QingpingTLVCO2WorkIntervalNumber(
+                    coordinator, config_entry, mac, name, device_info
+                )
+            )
+
+    # JSON devices (CGS1, CGS2, CGDN1) - Use existing offset system
+    else:
+        step = 0.1 if native_temp_unit == UnitOfTemperature.FAHRENHEIT else 1
+        
         entities.extend([
-            QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "Noise Offset", CONF_NOISE_OFFSET, device_info, "dB"),
-            QingpingCGSxSensorOffsetNumber(coordinator, config_entry, mac, name, "TVOC Index Offset", CONF_TVOC_INDEX_OFFSET, device_info, "%"),
+            QingpingCGSxOffsetNumber(
+                coordinator, config_entry, mac, name, "Temp Offset",
+                CONF_TEMPERATURE_OFFSET, device_info, native_temp_unit, step
+            ),
+            QingpingCGSxOffsetNumber(
+                coordinator, config_entry, mac, name, "Humidity Offset",
+                CONF_HUMIDITY_OFFSET, device_info, "%", step
+            ),
+            QingpingCGSxUpdateIntervalNumber(
+                coordinator, config_entry, mac, name, device_info
+            ),
+            QingpingCGSxSensorOffsetNumber(
+                coordinator, config_entry, mac, name, "CO2 Offset",
+                CONF_CO2_OFFSET, device_info, "ppm"
+            ),
         ])
-    elif model == "CGDN1":
-        entities.extend([
-            QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Power Off Time", CONF_POWER_OFF_TIME, device_info, 0, 60, 1, 30, "minutes", NumberMode.SLIDER),
-            #QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Display Off Time", CONF_DISPLAY_OFF_TIME, device_info, 0, 300, 1, 30, "seconds", NumberMode.SLIDER),
-            QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Auto Sliding Time", CONF_AUTO_SLIDING_TIME, device_info, 0, 180, 5, 30, "seconds", NumberMode.SLIDER),
-            #QingpingCGSxScreensaverTypeNumber(coordinator, config_entry, mac, name, device_info),
-            QingpingCGSxTimezoneNumber(coordinator, config_entry, mac, name, device_info),
-        ])
+
+        # Model-specific entities
+        if model in ["CGS1", "CGS2", "CGDN1"]:
+            entities.append(
+                QingpingCGSxSensorOffsetNumber(
+                    coordinator, config_entry, mac, name, "PM2.5 Offset",
+                    CONF_PM25_OFFSET, device_info, "µg/m³"
+                )
+            )
+            entities.append(
+                QingpingCGSxSensorOffsetNumber(
+                    coordinator, config_entry, mac, name, "PM10 Offset",
+                    CONF_PM10_OFFSET, device_info, "µg/m³"
+                )
+            )
+
+        if model == "CGS1":
+            entities.append(
+                QingpingCGSxSensorOffsetNumber(
+                    coordinator, config_entry, mac, name, "TVOC Offset",
+                    CONF_TVOC_OFFSET, device_info, "%"
+                )
+            )
+
+        if model == "CGS2":
+            entities.extend([
+                QingpingCGSxSensorOffsetNumber(
+                    coordinator, config_entry, mac, name, "Noise Offset",
+                    CONF_NOISE_OFFSET, device_info, "dB"
+                ),
+                QingpingCGSxSensorOffsetNumber(
+                    coordinator, config_entry, mac, name, "eTVOC Index Offset",
+                    CONF_TVOC_INDEX_OFFSET, device_info, "%"
+                ),
+            ])
+
+        if model == "CGDN1":
+            entities.extend([
+                QingpingCGSxPowerOffTimeNumber(
+                    coordinator, config_entry, mac, name, device_info
+                ),
+                QingpingCGSxAutoSlidingTimeNumber(
+                    coordinator, config_entry, mac, name, device_info
+                ),
+            ])
 
     async_add_entities(entities)
+
+
+class QingpingTLVReportIntervalNumber(CoordinatorEntity, NumberEntity):
+    """Number entity for TLV device report interval (historic mode only)."""
+
+    def __init__(self, coordinator, config_entry, mac, name, device_info):
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._mac = mac
+        self._attr_name = f"{name} Report Interval"
+        self._attr_unique_id = f"{mac}_report_interval"
+        self._attr_device_info = device_info
+        self._attr_native_min_value = 10
+        self._attr_native_max_value = 60
+        self._attr_native_step = 5
+        self._attr_native_unit_of_measurement = "min"
+        self._attr_mode = NumberMode.BOX
+        self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_icon = "mdi:clock-outline"
+
+    @property
+    def native_value(self) -> int:
+        """Return the current value."""
+        return self.coordinator.data.get(CONF_REPORT_INTERVAL, 10)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the value and send to device."""
+        int_value = int(value)
+        self.coordinator.data[CONF_REPORT_INTERVAL] = int_value
+        self.async_write_ha_state()
+
+        # Update config entry
+        new_data = dict(self._config_entry.data)
+        new_data[CONF_REPORT_INTERVAL] = int_value
+        self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+
+        await self.coordinator.async_request_refresh()
+
+        # Send TLV command (KEY 0x04) - device must be plugged in
+        packets = {
+            0x04: int_to_bytes_little_endian(int_value, 2)
+        }
+        payload = tlv_encode(0x32, packets)
+        topic = f"qingping/{self._mac}/down"
+        await mqtt.async_publish(self.hass, topic, payload)
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        await super().async_added_to_hass()
+        self._handle_coordinator_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if CONF_REPORT_INTERVAL not in self.coordinator.data:
+            self.coordinator.data[CONF_REPORT_INTERVAL] = self._config_entry.data.get(CONF_REPORT_INTERVAL, 5)
+        self.async_write_ha_state()
+
+
+class QingpingTLVSampleIntervalNumber(CoordinatorEntity, NumberEntity):
+    """Number entity for TLV device sample interval (historic mode only)."""
+
+    def __init__(self, coordinator, config_entry, mac, name, device_info):
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._mac = mac
+        self._attr_name = f"{name} Sample Interval"
+        self._attr_unique_id = f"{mac}_sample_interval"
+        self._attr_device_info = device_info
+        self._attr_native_min_value = 10
+        self._attr_native_max_value = 300
+        self._attr_native_step = 10
+        self._attr_native_unit_of_measurement = "s"
+        self._attr_mode = NumberMode.BOX
+        self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_icon = "mdi:timer-outline"
+
+    @property
+    def native_value(self) -> int:
+        """Return the current value."""
+        return self.coordinator.data.get(CONF_SAMPLE_INTERVAL, 60)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the value and send to device."""
+        int_value = int(value)
+        self.coordinator.data[CONF_SAMPLE_INTERVAL] = int_value
+        self.async_write_ha_state()
+
+        # Update config entry
+        new_data = dict(self._config_entry.data)
+        new_data[CONF_SAMPLE_INTERVAL] = int_value
+        self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+
+        await self.coordinator.async_request_refresh()
+
+        # Send TLV command (KEY 0x05) - device must be plugged in
+        packets = {
+            0x05: int_to_bytes_little_endian(int_value, 2)
+        }
+        payload = tlv_encode(0x32, packets)
+        topic = f"qingping/{self._mac}/down"
+        await mqtt.async_publish(self.hass, topic, payload)
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        await super().async_added_to_hass()
+        self._handle_coordinator_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if CONF_SAMPLE_INTERVAL not in self.coordinator.data:
+            self.coordinator.data[CONF_SAMPLE_INTERVAL] = self._config_entry.data.get(CONF_SAMPLE_INTERVAL, 60)
+        self.async_write_ha_state()
+
+
+class QingpingTLVOffsetNumber(CoordinatorEntity, NumberEntity):
+    """Number entity for TLV device offsets using TLV commands."""
+
+    def __init__(self, coordinator, config_entry, mac, name, display_name, 
+                 conf_key, device_info, tlv_key, min_value, max_value, step, unit):
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._mac = mac
+        self._conf_key = conf_key
+        self._tlv_key = tlv_key
+        self._attr_name = f"{name} {display_name}"
+        self._attr_unique_id = f"{mac}_{conf_key}"
+        self._attr_device_info = device_info
+        self._attr_native_min_value = min_value
+        self._attr_native_max_value = max_value
+        self._attr_native_step = step
+        self._attr_native_unit_of_measurement = unit
+        self._attr_mode = NumberMode.BOX
+        self._attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def native_value(self) -> float:
+        """Return the current value."""
+        return self.coordinator.data.get(self._conf_key, 0)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the value."""
+        self.coordinator.data[self._conf_key] = value
+        self.async_write_ha_state()
+
+        # Update config entry
+        new_data = dict(self._config_entry.data)
+        new_data[self._conf_key] = value
+        self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+
+        await self.coordinator.async_request_refresh()
+
+        # Send TLV command to device
+        # For temperature offset, convert F to C if needed (device expects Celsius)
+        if self._conf_key == CONF_TEMPERATURE_OFFSET and self._attr_native_unit_of_measurement == UnitOfTemperature.FAHRENHEIT:
+            # Convert F to C: (F - 32) × 5/9
+            celsius_value = (value * 5) / 9
+            device_value = int(celsius_value * 10)
+        elif self._attr_native_step == 0.1 or self._attr_native_step == 0.2:
+            device_value = int(value * 10)
+        else:
+            device_value = int(value)
+
+        packets = {
+            self._tlv_key: int_to_bytes_little_endian(device_value, 2, signed=True)
+        }
+        payload = tlv_encode(0x32, packets)
+
+        topic = f"qingping/{self._mac}/down"
+        await mqtt.async_publish(self.hass, topic, payload)
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        await super().async_added_to_hass()
+        self._handle_coordinator_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if self._conf_key not in self.coordinator.data:
+            self.coordinator.data[self._conf_key] = self._config_entry.data.get(self._conf_key, 0)
+        self.async_write_ha_state()
+
+
+class QingpingTLVPowerOffTimeNumber(CoordinatorEntity, NumberEntity):
+    """Number entity for TLV device power off time."""
+
+    def __init__(self, coordinator, config_entry, mac, name, device_info):
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._mac = mac
+        self._attr_name = f"{name} Power Off Time"
+        self._attr_unique_id = f"{mac}_power_off_time"
+        self._attr_device_info = device_info
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 1440
+        self._attr_native_step = 1
+        self._attr_native_unit_of_measurement = "min"
+        self._attr_mode = NumberMode.BOX
+        self._attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def native_value(self) -> int:
+        """Return the current value."""
+        return self.coordinator.data.get(CONF_POWER_OFF_TIME, 0)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the value."""
+        int_value = int(value)
+        self.coordinator.data[CONF_POWER_OFF_TIME] = int_value
+        self.async_write_ha_state()
+
+        # Update config entry
+        new_data = dict(self._config_entry.data)
+        new_data[CONF_POWER_OFF_TIME] = int_value
+        self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+
+        await self.coordinator.async_request_refresh()
+
+        # Send TLV command (KEY 0x3D)
+        packets = {
+            0x3D: int_to_bytes_little_endian(int_value, 2)
+        }
+        payload = tlv_encode(0x32, packets)
+
+        topic = f"qingping/{self._mac}/down"
+        await mqtt.async_publish(self.hass, topic, payload)
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        await super().async_added_to_hass()
+        self._handle_coordinator_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if CONF_POWER_OFF_TIME not in self.coordinator.data:
+            self.coordinator.data[CONF_POWER_OFF_TIME] = self._config_entry.data.get(CONF_POWER_OFF_TIME, 0)
+        self.async_write_ha_state()
+
+
+# Legacy JSON device number entities (existing code for CGS1, CGS2, CGDN1)
+
+class QingpingTLVCO2WorkIntervalNumber(CoordinatorEntity, NumberEntity):
+    """Number entity for TLV device CO2 work interval."""
+
+    def __init__(self, coordinator, config_entry, mac, name, device_info):
+        """Initialize the number entity."""
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._mac = mac
+        self._attr_name = f"{name} CO2 Interval"
+        self._attr_unique_id = f"{mac}_co2_work_interval"
+        self._attr_device_info = device_info
+        self._attr_native_min_value = 1
+        self._attr_native_max_value = 60
+        self._attr_native_step = 1  # Allow any value, but recommend specific steps
+        self._attr_native_unit_of_measurement = "min"
+        self._attr_mode = NumberMode.BOX
+        self._attr_entity_category = EntityCategory.CONFIG
+
+    @property
+    def native_value(self) -> int:
+        """Return the current value."""
+        return self.coordinator.data.get("co2_work_interval", 5)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the value."""
+        int_value = int(value)
+        self.coordinator.data["co2_work_interval"] = int_value
+        self.async_write_ha_state()
+
+        # Update config entry
+        new_data = dict(self._config_entry.data)
+        new_data["co2_work_interval"] = int_value
+        self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
+
+        await self.coordinator.async_request_refresh()
+
+        # Send TLV command (KEY 0x3C)
+        packets = {
+            0x3B: int_to_bytes_little_endian(int_value, 2)
+        }
+        payload = tlv_encode(0x32, packets)
+
+        topic = f"qingping/{self._mac}/down"
+        await mqtt.async_publish(self.hass, topic, payload)
+
+    async def async_added_to_hass(self) -> None:
+        """Run when entity about to be added to hass."""
+        await super().async_added_to_hass()
+        self._handle_coordinator_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if "co2_work_interval" not in self.coordinator.data:
+            self.coordinator.data["co2_work_interval"] = self._config_entry.data.get("co2_work_interval", 5)
+        self.async_write_ha_state()
+
 
 class QingpingCGSxOffsetNumber(CoordinatorEntity, NumberEntity):
     """Representation of a Qingping CGSx offset number input."""
@@ -139,11 +570,12 @@ class QingpingCGSxOffsetNumber(CoordinatorEntity, NumberEntity):
             self.coordinator.data[self._offset_key] = self._config_entry.data.get(self._offset_key, DEFAULT_OFFSET)
         self.async_write_ha_state()
 
+
 class QingpingCGSxUpdateIntervalNumber(CoordinatorEntity, NumberEntity):
     """Representation of a Qingping CGSx update interval number input."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
-        """Initialize the number entity."""
+        """Initialize the number input."""
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._mac = mac
@@ -151,9 +583,10 @@ class QingpingCGSxUpdateIntervalNumber(CoordinatorEntity, NumberEntity):
         self._attr_unique_id = f"{mac}_update_interval"
         self._attr_device_info = device_info
         self._attr_native_min_value = 5
-        self._attr_native_max_value = 120
-        self._attr_native_step = 5
-        self._attr_native_unit_of_measurement = "seconds"
+        self._attr_native_max_value = 300
+        self._attr_native_step = 10
+        self._attr_native_unit_of_measurement = "s"
+        self._attr_mode = NumberMode.BOX
         self._attr_entity_category = EntityCategory.CONFIG
 
     @property
@@ -161,24 +594,23 @@ class QingpingCGSxUpdateIntervalNumber(CoordinatorEntity, NumberEntity):
         """Return the current value."""
         return self.coordinator.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
 
-    async def async_set_native_value(self, value: int) -> None:
-        """Update the current value."""
-        self.coordinator.data[CONF_UPDATE_INTERVAL] = value
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the value."""
+        int_value = int(value)
+        self.coordinator.data[CONF_UPDATE_INTERVAL] = int_value
         self.async_write_ha_state()
 
-        # Update config entry
         new_data = dict(self._config_entry.data)
-        new_data[CONF_UPDATE_INTERVAL] = value
+        new_data[CONF_UPDATE_INTERVAL] = int_value
         self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-        
+
         await self.coordinator.async_request_refresh()
 
-        # Publish new configuration (this uses type 12, not type 17)
         sensors = self.hass.data[DOMAIN][self._config_entry.entry_id].get("sensors", [])
         for sensor in sensors:
             if hasattr(sensor, 'publish_config'):
                 await sensor.publish_config()
-                break  # We only need to call it once
+                break
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
@@ -191,6 +623,7 @@ class QingpingCGSxUpdateIntervalNumber(CoordinatorEntity, NumberEntity):
         if CONF_UPDATE_INTERVAL not in self.coordinator.data:
             self.coordinator.data[CONF_UPDATE_INTERVAL] = self._config_entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
         self.async_write_ha_state()
+
 
 class QingpingCGSxSensorOffsetNumber(CoordinatorEntity, NumberEntity):
     """Representation of a Qingping CGSx sensor offset number input."""
@@ -249,96 +682,44 @@ class QingpingCGSxSensorOffsetNumber(CoordinatorEntity, NumberEntity):
             self.coordinator.data[self._offset_key] = self._config_entry.data.get(self._offset_key, DEFAULT_SENSOR_OFFSET)
         self.async_write_ha_state()
 
-class QingpingCGSxTimeNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGSx time setting number input."""
 
-    def __init__(self, coordinator, config_entry, mac, name, time_name, time_key, device_info, min_val, max_val, step, default_val, unit, mode=NumberMode.BOX):
-        """Initialize the number entity."""
-        super().__init__(coordinator)
-        self._config_entry = config_entry
-        self._mac = mac
-        self._time_key = time_key
-        self._default_val = default_val
-        self._attr_name = f"{name} {time_name}"
-        self._attr_unique_id = f"{mac}_{time_key}"
-        self._attr_device_info = device_info
-        self._attr_native_min_value = min_val
-        self._attr_native_max_value = max_val
-        self._attr_native_step = step
-        self._attr_entity_category = EntityCategory.CONFIG
-        self._attr_native_unit_of_measurement = unit
-        self._attr_mode = mode
-
-    @property
-    def native_value(self) -> int:
-        """Return the current value."""
-        return self.coordinator.data.get(self._time_key, self._default_val)
-
-    async def async_set_native_value(self, value: int) -> None:
-        """Update the current value."""
-        self.coordinator.data[self._time_key] = value
-        self.async_write_ha_state()
-        
-        # Update config entry
-        new_data = dict(self._config_entry.data)
-        new_data[self._time_key] = value
-        self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-        
-        await self.coordinator.async_request_refresh()
-        
-        # Publish setting change to device
-        from .sensor import publish_setting_change
-        await publish_setting_change(self.hass, self._mac, self._time_key, int(value))
-
-    async def async_added_to_hass(self) -> None:
-        """Run when entity about to be added to hass."""
-        await super().async_added_to_hass()
-        self._handle_coordinator_update()
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        if self._time_key not in self.coordinator.data:
-            self.coordinator.data[self._time_key] = self._config_entry.data.get(self._time_key, self._default_val)
-        self.async_write_ha_state()
-
-class QingpingCGSxScreensaverTypeNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGSx screensaver type number input."""
+class QingpingCGSxPowerOffTimeNumber(CoordinatorEntity, NumberEntity):
+    """Representation of a Qingping CGDN1 power off time number input."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
-        """Initialize the number entity."""
+        """Initialize the number input."""
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._mac = mac
-        self._attr_name = f"{name} Screensaver Type"
-        self._attr_unique_id = f"{mac}_screensaver_type"
+        self._attr_name = f"{name} Power Off Time"
+        self._attr_unique_id = f"{mac}_power_off_time"
         self._attr_device_info = device_info
         self._attr_native_min_value = 0
-        self._attr_native_max_value = 3
+        self._attr_native_max_value = 1440
         self._attr_native_step = 1
+        self._attr_native_unit_of_measurement = "min"
+        self._attr_mode = NumberMode.BOX
         self._attr_entity_category = EntityCategory.CONFIG
-        self._attr_mode = NumberMode.BOX  # Use number box instead of slider
 
     @property
     def native_value(self) -> int:
         """Return the current value."""
-        return self.coordinator.data.get(CONF_SCREENSAVER_TYPE, 1)
+        return self.coordinator.data.get(CONF_POWER_OFF_TIME, 0)
 
-    async def async_set_native_value(self, value: int) -> None:
-        """Update the current value."""
-        self.coordinator.data[CONF_SCREENSAVER_TYPE] = value
+    async def async_set_native_value(self, value: float) -> None:
+        """Update the value."""
+        int_value = int(value)
+        self.coordinator.data[CONF_POWER_OFF_TIME] = int_value
         self.async_write_ha_state()
-        
-        # Update config entry
+
         new_data = dict(self._config_entry.data)
-        new_data[CONF_SCREENSAVER_TYPE] = value
+        new_data[CONF_POWER_OFF_TIME] = int_value
         self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-        
+
         await self.coordinator.async_request_refresh()
-        
-        # Publish setting change to device
+
         from .sensor import publish_setting_change
-        await publish_setting_change(self.hass, self._mac, CONF_SCREENSAVER_TYPE, int(value))
+        await publish_setting_change(self.hass, self._mac, CONF_POWER_OFF_TIME, int_value)
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
@@ -348,48 +729,48 @@ class QingpingCGSxScreensaverTypeNumber(CoordinatorEntity, NumberEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if CONF_SCREENSAVER_TYPE not in self.coordinator.data:
-            self.coordinator.data[CONF_SCREENSAVER_TYPE] = self._config_entry.data.get(CONF_SCREENSAVER_TYPE, 1)
+        if CONF_POWER_OFF_TIME not in self.coordinator.data:
+            self.coordinator.data[CONF_POWER_OFF_TIME] = self._config_entry.data.get(CONF_POWER_OFF_TIME, 0)
         self.async_write_ha_state()
 
-class QingpingCGSxTimezoneNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGSx timezone setting number input."""
+
+class QingpingCGSxAutoSlidingTimeNumber(CoordinatorEntity, NumberEntity):
+    """Representation of a Qingping CGDN1 auto sliding time number input."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
-        """Initialize the number entity."""
+        """Initialize the number input."""
         super().__init__(coordinator)
         self._config_entry = config_entry
         self._mac = mac
-        self._attr_name = f"{name} Time Zone"
-        self._attr_unique_id = f"{mac}_timezone"
+        self._attr_name = f"{name} Auto Sliding Time"
+        self._attr_unique_id = f"{mac}_auto_sliding_time"
         self._attr_device_info = device_info
-        self._attr_native_min_value = -12
-        self._attr_native_max_value = 14
-        self._attr_native_step = 0.5
-        self._attr_entity_category = EntityCategory.CONFIG
+        self._attr_native_min_value = 0
+        self._attr_native_max_value = 60
+        self._attr_native_step = 1
+        self._attr_native_unit_of_measurement = "s"
         self._attr_mode = NumberMode.BOX
+        self._attr_entity_category = EntityCategory.CONFIG
 
     @property
-    def native_value(self) -> float:
+    def native_value(self) -> int:
         """Return the current value."""
-        return self.coordinator.data.get(CONF_TIMEZONE, 0)
+        return self.coordinator.data.get(CONF_AUTO_SLIDING_TIME, 0)
 
     async def async_set_native_value(self, value: float) -> None:
-        """Update the current value."""
-        self.coordinator.data[CONF_TIMEZONE] = value
+        """Update the value."""
+        int_value = int(value)
+        self.coordinator.data[CONF_AUTO_SLIDING_TIME] = int_value
         self.async_write_ha_state()
-        
-        # Update config entry
+
         new_data = dict(self._config_entry.data)
-        new_data[CONF_TIMEZONE] = value
+        new_data[CONF_AUTO_SLIDING_TIME] = int_value
         self.hass.config_entries.async_update_entry(self._config_entry, data=new_data)
-        
+
         await self.coordinator.async_request_refresh()
-        
-        # Publish setting change to device (value * 10 for device)
+
         from .sensor import publish_setting_change
-        device_value = int(value * 10)
-        await publish_setting_change(self.hass, self._mac, CONF_TIMEZONE, device_value)
+        await publish_setting_change(self.hass, self._mac, CONF_AUTO_SLIDING_TIME, int_value)
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added to hass."""
@@ -399,6 +780,6 @@ class QingpingCGSxTimezoneNumber(CoordinatorEntity, NumberEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if CONF_TIMEZONE not in self.coordinator.data:
-            self.coordinator.data[CONF_TIMEZONE] = self._config_entry.data.get(CONF_TIMEZONE, 0)
+        if CONF_AUTO_SLIDING_TIME not in self.coordinator.data:
+            self.coordinator.data[CONF_AUTO_SLIDING_TIME] = self._config_entry.data.get(CONF_AUTO_SLIDING_TIME, 0)
         self.async_write_ha_state()

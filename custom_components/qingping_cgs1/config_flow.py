@@ -1,4 +1,4 @@
-"""Config flow for Qingping CGSx integration."""
+"""Config flow for Qingping CGxx integration."""
 from __future__ import annotations
 
 import voluptuous as vol
@@ -22,7 +22,7 @@ def clean_mac_address(mac: str) -> str:
     return mac.replace(":", "")
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Qingping CGSx."""
+    """Handle a config flow for Qingping CGxx."""
 
     VERSION = 1
 
@@ -77,7 +77,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(title=validated_data[CONF_NAME], data=validated_data)
 
         except Exception as ex:
-            _LOGGER.error("Unexpected exception in Qingping CGSx config flow: %s", ex)
+            _LOGGER.error("Unexpected exception in Qingping CGxx config flow: %s", ex)
             errors["base"] = "unknown"
             return self.async_show_form(
                 step_id="user",
@@ -145,7 +145,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
     async def _async_discover_devices(self):
-        """Discover available Qingping CGSx devices via MQTT."""
+        """Discover available Qingping CGxx devices via MQTT."""
         try:
             # Get list of already configured devices
             configured_devices = {
@@ -155,25 +155,36 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             def _handle_message(msg):
                 """Handle received MQTT messages."""
                 try:
-                    # Extract MAC address from the topic
-                    mac = clean_mac_address(msg.topic.split('/')[-2])
-                    if mac and mac not in configured_devices and mac not in self._discovered_devices:
-                        self._discovered_devices[mac] = f"Qingping CGSx ({mac})"
+                    # Extract MAC address from the topic (works for both JSON and TLV)
+                    # Topic format: qingping/{MAC}/up
+                    topic_parts = msg.topic.split('/')
+                    if len(topic_parts) >= 2:
+                        mac = clean_mac_address(topic_parts[-2])
+                        if mac and mac not in configured_devices and mac not in self._discovered_devices:
+                            # Check if it's TLV format (binary starting with 'CG')
+                            if msg.payload[:2] == b'CG':
+                                device_name = f"Qingping TLV Device ({mac})"
+                            else:
+                                # JSON format
+                                device_name = f"Qingping JSON ({mac})"
+                            
+                            self._discovered_devices[mac] = device_name
+                            _LOGGER.info(f"Discovered device: {device_name}")
                 except Exception as ex:
                     _LOGGER.error("Error handling MQTT message: %s", ex)
 
             # Subscribe to the MQTT topic
             await mqtt.async_subscribe(
-                self.hass, f"{MQTT_TOPIC_PREFIX}/#", _handle_message
+                self.hass, f"{MQTT_TOPIC_PREFIX}/#", _handle_message, 1, encoding=None
             )
 
             # Wait for a short time to collect messages
-            await asyncio.sleep(10)  # Increased to 10 seconds for better discovery
+            await asyncio.sleep(10)  # Wait 10 seconds to collect messages
 
-            _LOGGER.info(f"Discovered {len(self._discovered_devices)} new Qingping CGSx devices")
+            _LOGGER.info(f"Discovered {len(self._discovered_devices)} new Qingping devices (JSON + TLV)")
 
         except HomeAssistantError as ex:
-            _LOGGER.error("Error discovering Qingping CGSx devices: %s", ex)
+            _LOGGER.error("Error discovering Qingping devices: %s", ex)
         except Exception as ex:
             _LOGGER.error("Unexpected error in device discovery: %s", ex)
 

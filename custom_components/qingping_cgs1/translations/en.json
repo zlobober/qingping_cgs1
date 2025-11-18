@@ -2,8 +2,8 @@
     "config": {
         "step": {
             "user": {
-                "description": "Set up your Qingping CGxx device",
-                "title": "Qingping Pro AQM",
+                "description": "Set up your Qingping device",
+                "title": "Qingping",
                 "data": {
                     "name": "Device Name",
                     "mac": "MAC Address",
@@ -12,11 +12,11 @@
             },
             "no_devices": {
                 "description": "Click submit to add device manually",
-                "title": "Qingping CGxx device not found"
+                "title": "Qingping device not found"
             },
             "manual": {
-                "description": "Set up your Qingping CGxx device",
-                "title": "Qingping Pro AQM",
+                "description": "Set up your Qingping device",
+                "title": "Qingping",
                 "data": {
                     "name": "Device Name",
                     "mac": "MAC Address",
@@ -28,7 +28,7 @@
     "options": {
         "step": {
             "init": {
-                "description": "Select Qingping Pro AQM Model",
+                "description": "Select Qingping Model",
                 "data": {
                     "model": "Select your device"
                 }

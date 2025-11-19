@@ -22,7 +22,7 @@ This custom component integrates the Qingping devices with Home Assistant, allow
 | <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/dee1356d-1c6b-4fcc-9640-77772e87b652" /> | Temp & RH Monitor Pro S `(CGP22W)` | TLV Binary |
 | <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/b7c993cb-8a1f-418b-bc38-387daba02756" /> | Temp & RH Barometer Pro S `(CGP23W)` | TLV Binary |
 | <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/c23b6cbf-ba75-486b-b221-73cd2b18105d" /> | CO₂ & Temp & RH Monitor `(CGP22C)` | TLV Binary |
-| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/8b758081-20b9-49f4-a97e-500cab179291" /> | Indoor Environment Monitor `(CGR1PW,CGR1W)` | TLV Binary |
+| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/8b758081-20b9-49f4-a97e-500cab179291" /> | Indoor Environment Monitor `(CGR1PW, CGR1W)` | TLV Binary |
  
 ## Features
 
@@ -76,7 +76,7 @@ This custom component integrates the Qingping devices with Home Assistant, allow
    - PM10
    - TVOC (ppb, ppm and mg/m³) `Only on CGS1`
    - eTVOC (ppb, VOC index and mg/m³) `Only on CGS2`
-   - Noise level `Only on CGS2, CGR1AD`
+   - Noise level `Only on CGS2, CGR1PW, CGR1W`
    - Temp & Humidity Offsets
    - PM2.5 Offsets
    - PM10 Offsets
@@ -86,14 +86,14 @@ This custom component integrates the Qingping devices with Home Assistant, allow
    - CO2 Offsets
    - CO₂ Interval `Only on CGP22C`
    - Auto Sliding `Only on CGDN1`
-   - Auto CO2 Calibration `Only on CGDN1, CGP22C, CGP23W, CGP22W, CGR1AD`
-   - Manual Calibration `Only on CGDN1, CGP22C, CGP23W, CGP22W, CGR1AD`
+   - Auto CO2 Calibration `Only on CGDN1, CGP22C, CGR1PW, CGR1W`
+   - Manual Calibration `Only on CGDN1, CGP22C, CGR1PW, CGR1W`
    - Night Mode `Only on CGDN1`
    - Power Off Time `Only on CGDN1, CGP22C`
    - Screensaver `Only on CGDN1`
    - Timezone `Only on CGDN1`
    - Pressure `Only on CGP23W`
-   - Light/Illuminance `Only on CGR1AD`
+   - Light/Illuminance `Only on CGR1PW, CGR1W`
    - Battery Charging State
    - Battery level
    - Device status (online/offline)

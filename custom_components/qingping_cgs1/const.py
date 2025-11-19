@@ -63,7 +63,7 @@ SENSOR_SIGNAL_STRENGTH = "signal_strength"
 # JSON format devices (old protocol)
 JSON_MODELS = ["CGS1", "CGS2", "CGDN1"]
 # TLV binary format devices (new protocol)
-TLV_MODELS = ["CGP22C", "CGP23W", "CGP22W", "CGR1AD"]
+TLV_MODELS = ["CGP22C", "CGP23W", "CGP22W","CGR1W", "CGR1PW"]
 # All supported models
 QP_MODELS = JSON_MODELS + TLV_MODELS
 DEFAULT_MODEL = "CGS1"
@@ -73,7 +73,8 @@ MODEL_PRODUCT_IDS = {
     "CGP22C": 93,  # CO₂ & Temp & RH Monitor
     "CGP23W": 38,  # Temp & RH Barometer Pro S
     "CGP22W": 92,  # Temp & RH Monitor Pro S
-    "CGR1AD": 96,  # Indoor Environment Monitor
+    "CGR1W": 96,  # Indoor Environment Monitor Screenless
+    "CGR1PW": 96,  # Indoor Environment Monitor
 }
 
 # Device-specific settings

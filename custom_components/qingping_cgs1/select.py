@@ -1,4 +1,4 @@
-"""Support for Qingping CGSx select entities."""
+"""Support for Qingping Device select entities."""
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
@@ -50,7 +50,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Qingping CGSx select entities from a config entry."""
+    """Set up Qingping Device select entities from a config entry."""
     mac = config_entry.data[CONF_MAC]
     name = config_entry.data[CONF_NAME]
     model = config_entry.data[CONF_MODEL]
@@ -70,36 +70,36 @@ async def async_setup_entry(
     # Add report mode select for TLV devices
     if model in TLV_MODELS:
         entities.append(
-            QingpingCGSxReportModeSelect(coordinator, config_entry, mac, name, device_info)
+            QingpingDeviceReportModeSelect(coordinator, config_entry, mac, name, device_info)
         )
         # Add temperature unit select for TLV devices
         entities.append(
-            QingpingCGSxTemperatureUnitSelect(coordinator, config_entry, mac, name, device_info, native_temp_unit)
+            QingpingDeviceTemperatureUnitSelect(coordinator, config_entry, mac, name, device_info, native_temp_unit)
         )
 
     if model == "CGS1":
         entities.append(
-            QingpingCGSxTVOCUnitSelect(coordinator, config_entry, mac, name, device_info, CONF_TVOC_UNIT, TVOC_UNIT_OPTIONS)
+            QingpingDeviceTVOCUnitSelect(coordinator, config_entry, mac, name, device_info, CONF_TVOC_UNIT, TVOC_UNIT_OPTIONS)
         )
     elif model == "CGS2":
         entities.append(
-            QingpingCGSxTVOCUnitSelect(coordinator, config_entry, mac, name, device_info, CONF_ETVOC_UNIT, ETVOC_UNIT_OPTIONS)
+            QingpingDeviceTVOCUnitSelect(coordinator, config_entry, mac, name, device_info, CONF_ETVOC_UNIT, ETVOC_UNIT_OPTIONS)
         )
-    elif model == "CGR1AD":
-        # CGR1AD uses TLV commands for eTVOC unit
+    elif model in ["CGR1W", "CGR1PW"]:
+        # "CGR1W", "CGR1PW" uses TLV commands for eTVOC unit
         entities.append(
             QingpingTLVeTVOCUnitSelect(coordinator, config_entry, mac, name, device_info)
         )
     elif model == "CGDN1":
         entities.append(
-            QingpingCGSxScreensaverTypeSelect(coordinator, config_entry, mac, name, device_info)
+            QingpingDeviceScreensaverTypeSelect(coordinator, config_entry, mac, name, device_info)
         )
 
     if entities:
         async_add_entities(entities)
 
-class QingpingCGSxTVOCUnitSelect(CoordinatorEntity, SelectEntity):
-    """Representation of a Qingping CGSx TVOC unit select entity."""
+class QingpingDeviceTVOCUnitSelect(CoordinatorEntity, SelectEntity):
+    """Representation of a Qingping Device TVOC unit select entity."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info, conf_unit, unit_options):
         """Initialize the select entity."""
@@ -143,7 +143,7 @@ class QingpingCGSxTVOCUnitSelect(CoordinatorEntity, SelectEntity):
         self.async_write_ha_state()
 
 class QingpingTLVeTVOCUnitSelect(CoordinatorEntity, SelectEntity):
-    """Representation of a Qingping CGR1AD eTVOC unit select entity with TLV commands."""
+    """Representation of a Qingping "CGR1W", "CGR1PW" eTVOC unit select entity with TLV commands."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
         """Initialize the select entity."""
@@ -204,8 +204,8 @@ class QingpingTLVeTVOCUnitSelect(CoordinatorEntity, SelectEntity):
             self.coordinator.data[CONF_ETVOC_UNIT] = self._config_entry.data.get(CONF_ETVOC_UNIT, "index")
         self.async_write_ha_state()
 
-class QingpingCGSxScreensaverTypeSelect(CoordinatorEntity, SelectEntity):
-    """Representation of a Qingping CGSx screensaver type select input."""
+class QingpingDeviceScreensaverTypeSelect(CoordinatorEntity, SelectEntity):
+    """Representation of a Qingping Device screensaver type select input."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
         """Initialize the select entity."""
@@ -256,7 +256,7 @@ class QingpingCGSxScreensaverTypeSelect(CoordinatorEntity, SelectEntity):
             self.coordinator.data[CONF_SCREENSAVER_TYPE] = self._config_entry.data.get(CONF_SCREENSAVER_TYPE, 1)
         self.async_write_ha_state()
 
-class QingpingCGSxReportModeSelect(CoordinatorEntity, SelectEntity):
+class QingpingDeviceReportModeSelect(CoordinatorEntity, SelectEntity):
     """Representation of a Qingping TLV device report mode select entity."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
@@ -312,7 +312,7 @@ class QingpingCGSxReportModeSelect(CoordinatorEntity, SelectEntity):
             self.coordinator.data[CONF_REPORT_MODE] = self._config_entry.data.get(CONF_REPORT_MODE, REPORT_MODE_HISTORIC)
         self.async_write_ha_state()
 
-class QingpingCGSxTemperatureUnitSelect(CoordinatorEntity, SelectEntity):
+class QingpingDeviceTemperatureUnitSelect(CoordinatorEntity, SelectEntity):
     """Representation of a Qingping TLV device temperature unit select entity."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info, native_temp_unit):

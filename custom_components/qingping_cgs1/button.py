@@ -1,4 +1,4 @@
-"""Support for Qingping CGSx button entities."""
+"""Support for Qingping Device button entities."""
 from __future__ import annotations
 
 import json
@@ -26,7 +26,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Qingping CGSx button entities from a config entry."""
+    """Set up Qingping Device button entities from a config entry."""
     mac = config_entry.data[CONF_MAC]
     name = config_entry.data[CONF_NAME]
     model = config_entry.data[CONF_MODEL]
@@ -43,11 +43,11 @@ async def async_setup_entry(
 
     if model == "CGDN1":
         entities.append(
-            QingpingCGSxManualCalibrationButton(config_entry, mac, name, device_info)
+            QingpingDeviceManualCalibrationButton(config_entry, mac, name, device_info)
         )
 
     # Add CO2 calibration button for TLV devices with CO2 sensor
-    if model in TLV_MODELS and model in ["CGP22C", "CGR1AD"]:
+    if model in TLV_MODELS and model in ["CGP22C", "CGR1W", "CGR1PW"]:
         entities.append(
             QingpingTLVCO2CalibrationButton(coordinator, config_entry, mac, name, device_info)
         )
@@ -82,7 +82,7 @@ class QingpingTLVCO2CalibrationButton(CoordinatorEntity, ButtonEntity):
         topic = f"qingping/{self._mac}/down"
         await mqtt.async_publish(self.hass, topic, payload)
 
-class QingpingCGSxManualCalibrationButton(ButtonEntity):
+class QingpingDeviceManualCalibrationButton(ButtonEntity):
     """Button to trigger manual CO2 calibration."""
 
     def __init__(self, config_entry, mac, name, device_info):

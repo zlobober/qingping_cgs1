@@ -1,4 +1,4 @@
-"""Support for Qingping CGSx number entities."""
+"""Support for Qingping Device number entities."""
 from __future__ import annotations
 
 from homeassistant.components.number import NumberEntity, NumberMode
@@ -27,7 +27,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Qingping CGSx number inputs from a config entry."""
+    """Set up Qingping Device number inputs from a config entry."""
     mac = config_entry.data[CONF_MAC]
     name = config_entry.data[CONF_NAME]
     model = config_entry.data[CONF_MODEL]
@@ -43,7 +43,7 @@ async def async_setup_entry(
 
     entities = []
 
-    # TLV devices (CGP22C, CGP23W, CGP22W, CGR1AD)
+    # TLV devices (CGP22C, CGP23W, CGP22W, CGR1W, CGR1PW)
     if model in TLV_MODELS:
         # Report and Sample intervals (for historic mode)
         entities.append(
@@ -81,7 +81,7 @@ async def async_setup_entry(
             )
         )
         # CO2 offset (only for models with CO2)
-        if model in ["CGP22C", "CGR1AD"]:
+        if model in ["CGP22C", "CGR1W", "CGR1PW"]:
             entities.append(
                 QingpingTLVOffsetNumber(
                     coordinator, config_entry, mac, name, "CO2 Offset",
@@ -100,8 +100,8 @@ async def async_setup_entry(
                 )
             )
         
-        # PM2.5 and PM10 offsets (for CGR1AD)
-        if model == "CGR1AD":
+        # PM2.5 and PM10 offsets (for "CGR1W", "CGR1PW")
+        if model in ["CGR1W", "CGR1PW"]:
             entities.append(
                 QingpingTLVOffsetNumber(
                     coordinator, config_entry, mac, name, "PM2.5 Offset",
@@ -135,18 +135,18 @@ async def async_setup_entry(
         step = 0.1 if native_temp_unit == UnitOfTemperature.FAHRENHEIT else 1
         
         entities.extend([
-            QingpingCGSxOffsetNumber(
+            QingpingDeviceOffsetNumber(
                 coordinator, config_entry, mac, name, "Temp Offset",
                 CONF_TEMPERATURE_OFFSET, device_info, native_temp_unit, step
             ),
-            QingpingCGSxOffsetNumber(
+            QingpingDeviceOffsetNumber(
                 coordinator, config_entry, mac, name, "Humidity Offset",
                 CONF_HUMIDITY_OFFSET, device_info, "%", step
             ),
-            QingpingCGSxUpdateIntervalNumber(
+            QingpingDeviceUpdateIntervalNumber(
                 coordinator, config_entry, mac, name, device_info
             ),
-            QingpingCGSxSensorOffsetNumber(
+            QingpingDeviceSensorOffsetNumber(
                 coordinator, config_entry, mac, name, "CO2 Offset",
                 CONF_CO2_OFFSET, device_info, "ppm"
             ),
@@ -155,13 +155,13 @@ async def async_setup_entry(
         # Model-specific entities
         if model in ["CGS1", "CGS2", "CGDN1"]:
             entities.append(
-                QingpingCGSxSensorOffsetNumber(
+                QingpingDeviceSensorOffsetNumber(
                     coordinator, config_entry, mac, name, "PM2.5 Offset",
                     CONF_PM25_OFFSET, device_info, "µg/m³"
                 )
             )
             entities.append(
-                QingpingCGSxSensorOffsetNumber(
+                QingpingDeviceSensorOffsetNumber(
                     coordinator, config_entry, mac, name, "PM10 Offset",
                     CONF_PM10_OFFSET, device_info, "µg/m³"
                 )
@@ -169,7 +169,7 @@ async def async_setup_entry(
 
         if model == "CGS1":
             entities.append(
-                QingpingCGSxSensorOffsetNumber(
+                QingpingDeviceSensorOffsetNumber(
                     coordinator, config_entry, mac, name, "TVOC Offset",
                     CONF_TVOC_OFFSET, device_info, "%"
                 )
@@ -177,11 +177,11 @@ async def async_setup_entry(
 
         if model == "CGS2":
             entities.extend([
-                QingpingCGSxSensorOffsetNumber(
+                QingpingDeviceSensorOffsetNumber(
                     coordinator, config_entry, mac, name, "Noise Offset",
                     CONF_NOISE_OFFSET, device_info, "dB"
                 ),
-                QingpingCGSxSensorOffsetNumber(
+                QingpingDeviceSensorOffsetNumber(
                     coordinator, config_entry, mac, name, "eTVOC Index Offset",
                     CONF_TVOC_INDEX_OFFSET, device_info, "%"
                 ),
@@ -189,9 +189,9 @@ async def async_setup_entry(
 
         if model == "CGDN1":
             entities.extend([
-                QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Power Off Time", CONF_POWER_OFF_TIME, device_info, 0, 1440, 1, 0, "minutes", NumberMode.BOX),
-                QingpingCGSxTimeNumber(coordinator, config_entry, mac, name, "Auto Sliding Time", CONF_AUTO_SLIDING_TIME, device_info, 0, 60, 1, 30, "seconds", NumberMode.BOX),
-                QingpingCGSxTimezoneNumber(coordinator, config_entry, mac, name, device_info),
+                QingpingDeviceTimeNumber(coordinator, config_entry, mac, name, "Power Off Time", CONF_POWER_OFF_TIME, device_info, 0, 1440, 1, 0, "minutes", NumberMode.BOX),
+                QingpingDeviceTimeNumber(coordinator, config_entry, mac, name, "Auto Sliding Time", CONF_AUTO_SLIDING_TIME, device_info, 0, 60, 1, 30, "seconds", NumberMode.BOX),
+                QingpingDeviceTimezoneNumber(coordinator, config_entry, mac, name, device_info),
             ])
 
     async_add_entities(entities)
@@ -501,8 +501,8 @@ class QingpingTLVCO2WorkIntervalNumber(CoordinatorEntity, NumberEntity):
         self.async_write_ha_state()
 
 
-class QingpingCGSxOffsetNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGSx offset number input."""
+class QingpingDeviceOffsetNumber(CoordinatorEntity, NumberEntity):
+    """Representation of a Qingping Device offset number input."""
 
     def __init__(self, coordinator, config_entry, mac, name, offset_name, offset_key, device_info, unit_of_measurement, step):
         """Initialize the number entity."""
@@ -569,8 +569,8 @@ class QingpingCGSxOffsetNumber(CoordinatorEntity, NumberEntity):
         self.async_write_ha_state()
 
 
-class QingpingCGSxUpdateIntervalNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGSx update interval number input."""
+class QingpingDeviceUpdateIntervalNumber(CoordinatorEntity, NumberEntity):
+    """Representation of a Qingping Device update interval number input."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
         """Initialize the number input."""
@@ -623,8 +623,8 @@ class QingpingCGSxUpdateIntervalNumber(CoordinatorEntity, NumberEntity):
         self.async_write_ha_state()
 
 
-class QingpingCGSxSensorOffsetNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGSx sensor offset number input."""
+class QingpingDeviceSensorOffsetNumber(CoordinatorEntity, NumberEntity):
+    """Representation of a Qingping Device sensor offset number input."""
 
     def __init__(self, coordinator, config_entry, mac, name, offset_name, offset_key, device_info, unit_of_measurement):
         """Initialize the number entity."""
@@ -681,8 +681,8 @@ class QingpingCGSxSensorOffsetNumber(CoordinatorEntity, NumberEntity):
         self.async_write_ha_state()
 
 
-class QingpingCGSxTimeNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGSx time setting number input."""
+class QingpingDeviceTimeNumber(CoordinatorEntity, NumberEntity):
+    """Representation of a Qingping Device time setting number input."""
 
     def __init__(self, coordinator, config_entry, mac, name, time_name, time_key, device_info, min_val, max_val, step, default_val, unit, mode=NumberMode.BOX):
         """Initialize the number entity."""
@@ -734,8 +734,8 @@ class QingpingCGSxTimeNumber(CoordinatorEntity, NumberEntity):
             self.coordinator.data[self._time_key] = self._config_entry.data.get(self._time_key, self._default_val)
         self.async_write_ha_state()
 
-class QingpingCGSxTimezoneNumber(CoordinatorEntity, NumberEntity):
-    """Representation of a Qingping CGSx timezone setting number input."""
+class QingpingDeviceTimezoneNumber(CoordinatorEntity, NumberEntity):
+    """Representation of a Qingping Device timezone setting number input."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
         """Initialize the number entity."""

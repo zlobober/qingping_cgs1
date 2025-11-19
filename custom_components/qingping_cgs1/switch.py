@@ -1,4 +1,4 @@
-"""Support for Qingping CGSx switch entities."""
+"""Support for Qingping Device switch entities."""
 from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
@@ -18,7 +18,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Qingping CGSx switch entities from a config entry."""
+    """Set up Qingping Device switch entities from a config entry."""
     mac = config_entry.data[CONF_MAC]
     name = config_entry.data[CONF_NAME]
     model = config_entry.data[CONF_MODEL]
@@ -36,17 +36,17 @@ async def async_setup_entry(
      # CGDN1-specific switches
     if model == "CGDN1":
         entities.append(
-            QingpingCGSxCO2ASCSwitch(coordinator, config_entry, mac, name, device_info)
+            QingpingDeviceCO2ASCSwitch(coordinator, config_entry, mac, name, device_info)
         )
 
     # Add CO2 ASC switch for TLV devices with CO2 sensor
-    if model in TLV_MODELS and model in ["CGP22C", "CGR1AD"]:
+    if model in TLV_MODELS and model in ["CGP22C", "CGR1W", "CGR1PW"]:
         entities.append(
             QingpingTLVCO2ASCSwitch(coordinator, config_entry, mac, name, device_info)
         )
     
-    # Add LED Indicator switch for CGR1AD
-    if model == "CGR1AD":
+    # Add LED Indicator switch for "CGR1W", "CGR1PW"
+    if model in ["CGR1W", "CGR1PW"]:
         entities.append(
             QingpingTLVLEDSwitch(coordinator, config_entry, mac, name, device_info)
         )
@@ -131,7 +131,7 @@ class QingpingTLVCO2ASCSwitch(CoordinatorEntity, SwitchEntity):
         self.async_write_ha_state()
 
 class QingpingTLVLEDSwitch(CoordinatorEntity, SwitchEntity):
-    """Representation of a Qingping CGR1AD LED Indicator switch."""
+    """Representation of a Qingping "CGR1W", "CGR1PW" LED Indicator switch."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):
         """Initialize the switch."""
@@ -205,7 +205,7 @@ class QingpingTLVLEDSwitch(CoordinatorEntity, SwitchEntity):
             self.coordinator.data[CONF_LED_INDICATOR] = self._config_entry.data.get(CONF_LED_INDICATOR, True)
         self.async_write_ha_state()
 
-class QingpingCGSxCO2ASCSwitch(CoordinatorEntity, SwitchEntity):
+class QingpingDeviceCO2ASCSwitch(CoordinatorEntity, SwitchEntity):
     """Switch to enable/disable CO2 Automatic Self-Calibration."""
 
     def __init__(self, coordinator, config_entry, mac, name, device_info):

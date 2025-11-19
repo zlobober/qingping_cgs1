@@ -16,13 +16,13 @@ This custom component integrates the Qingping devices with Home Assistant, allow
 
 |   | Model | MQTT Format |
 |---|-------|-------------|
-| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/860613a7-2b3d-4cd6-a77c-a007195277b2" /> | Air Monitor Lite (CGDN1) | JSON |
-| <img width="64" height="74" alt="image" src="https://github.com/user-attachments/assets/8be6d4fc-bf5f-4c2d-b8f4-2c406e70aa88" /> | Air Monitor Pro (CGS1) | JSON |
-| <img width="64" height="74" alt="image" src="https://github.com/user-attachments/assets/394e61fa-47d8-46e3-a034-041122daf1e4" /> | Air Monitor Pro 2 (CGS2) | JSON |
-| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/dee1356d-1c6b-4fcc-9640-77772e87b652" /> | Temp & RH Monitor Pro S (CGP22W) | TLV Binary |
-| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/b7c993cb-8a1f-418b-bc38-387daba02756" /> | Temp & RH Barometer Pro S (CGP23W) | TLV Binary |
-| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/c23b6cbf-ba75-486b-b221-73cd2b18105d" /> | CO₂ & Temp & RH Monitor (CGP22C) | TLV Binary |
-| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/8b758081-20b9-49f4-a97e-500cab179291" /> | Indoor Environment Monitor (CGR1PW,CGR1W) | TLV Binary |
+| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/860613a7-2b3d-4cd6-a77c-a007195277b2" /> | Air Monitor Lite `(CGDN1)` | JSON |
+| <img width="64" height="74" alt="image" src="https://github.com/user-attachments/assets/8be6d4fc-bf5f-4c2d-b8f4-2c406e70aa88" /> | Air Monitor Pro `(CGS1)` | JSON |
+| <img width="64" height="74" alt="image" src="https://github.com/user-attachments/assets/394e61fa-47d8-46e3-a034-041122daf1e4" /> | Air Monitor Pro 2 `(CGS2)` | JSON |
+| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/dee1356d-1c6b-4fcc-9640-77772e87b652" /> | Temp & RH Monitor Pro S `(CGP22W)` | TLV Binary |
+| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/b7c993cb-8a1f-418b-bc38-387daba02756" /> | Temp & RH Barometer Pro S `(CGP23W)` | TLV Binary |
+| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/c23b6cbf-ba75-486b-b221-73cd2b18105d" /> | CO₂ & Temp & RH Monitor `(CGP22C)` | TLV Binary |
+| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/8b758081-20b9-49f4-a97e-500cab179291" /> | Indoor Environment Monitor `(CGR1PW,CGR1W)` | TLV Binary |
  
 ## Features
 

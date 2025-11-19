@@ -188,7 +188,7 @@ def decode_sensor_data_v2(byte_array: bytes) -> dict[str, Any]:
             sensor_data["humidity"] = humidity_val / 10.0
             sensor_data["co2"] = co2_val
             
-    elif sensor_type == 10:  # Full environment monitor (CGR1AD)
+    elif sensor_type == 10:  # Full environment monitor ("CGR1W", "CGR1PW")
         if len(byte_array) >= 23:
             temperature_val = bytes_to_int_little_endian(byte_array[5:7])
             humidity_val = bytes_to_int_little_endian(byte_array[7:9])

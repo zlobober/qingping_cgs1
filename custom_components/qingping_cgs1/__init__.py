@@ -1,4 +1,4 @@
-"""The Qingping CGSx integration."""
+"""The Qingping Device integration."""
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,7 +14,7 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.NUMBER, Platform.SELECT, 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Qingping CGSx from a config entry."""
+    """Set up Qingping Device from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
     async def async_update_data():

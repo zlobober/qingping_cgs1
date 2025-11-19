@@ -22,7 +22,7 @@ This custom component integrates the Qingping devices with Home Assistant, allow
 | <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/dee1356d-1c6b-4fcc-9640-77772e87b652" /> | Temp & RH Monitor Pro S (CGP22W) | TLV Binary |
 | <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/b7c993cb-8a1f-418b-bc38-387daba02756" /> | Temp & RH Barometer Pro S (CGP23W) | TLV Binary |
 | <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/c23b6cbf-ba75-486b-b221-73cd2b18105d" /> | CO₂ & Temp & RH Monitor (CGP22C) | TLV Binary |
-| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/8b758081-20b9-49f4-a97e-500cab179291" /> | Indoor Environment Monitor (CGR1AD) | TLV Binary |
+| <img width="64" height="64" alt="image" src="https://github.com/user-attachments/assets/8b758081-20b9-49f4-a97e-500cab179291" /> | Indoor Environment Monitor (CGR1PW,CGR1W) | TLV Binary |
  
 ## Features
 

@@ -1,4 +1,4 @@
-"""Support for Qingping CGSx time entities."""
+"""Support for Qingping Device time entities."""
 from __future__ import annotations
 
 import datetime
@@ -21,7 +21,7 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Qingping CGSx time entities from a config entry."""
+    """Set up Qingping Device time entities from a config entry."""
     mac = config_entry.data[CONF_MAC]
     name = config_entry.data[CONF_NAME]
     model = config_entry.data[CONF_MODEL]
@@ -39,16 +39,16 @@ async def async_setup_entry(
     # CGDN1-specific time entities
     if model == "CGDN1":
         entities.extend([
-            QingpingCGSxTimeEntity(coordinator, config_entry, mac, name, "Night Mode Start Time", CONF_NIGHT_MODE_START_TIME, device_info, 1260),
-            QingpingCGSxTimeEntity(coordinator, config_entry, mac, name, "Night Mode End Time", CONF_NIGHT_MODE_END_TIME, device_info, 360),
+            QingpingDeviceTimeEntity(coordinator, config_entry, mac, name, "Night Mode Start Time", CONF_NIGHT_MODE_START_TIME, device_info, 1260),
+            QingpingDeviceTimeEntity(coordinator, config_entry, mac, name, "Night Mode End Time", CONF_NIGHT_MODE_END_TIME, device_info, 360),
         ])
 
     if entities:
         async_add_entities(entities)
 
 
-class QingpingCGSxTimeEntity(CoordinatorEntity, TimeEntity):
-    """Representation of a Qingping CGSx time entity."""
+class QingpingDeviceTimeEntity(CoordinatorEntity, TimeEntity):
+    """Representation of a Qingping Device time entity."""
 
     def __init__(self, coordinator, config_entry, mac, name, time_name, time_key, device_info, default_minutes):
         """Initialize the time entity."""

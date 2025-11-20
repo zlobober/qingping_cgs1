@@ -46,10 +46,10 @@ This custom component integrates the Qingping devices with Home Assistant, allow
 
 1. Use HACS to install this integration:
    <br /><br /><a href="https://my.home-assistant.io/redirect/hacs_repository/?repository=qingping_cgs1&category=integration&owner=mash2k3" target="_blank" rel="noreferrer noopener"><img src="https://my.home-assistant.io/badges/hacs_repository.svg" alt="Open your Home Assistant instance and open a repository inside the Home Assistant Community Store." /></a>
-2. Download the Qingping Pro AQM repository.
+2. Download the Qingping repository.
 3. Restart Home Assistant
 4. Go to "Configuration" -> "Integrations" and click "+" to add a new integration
-5. Search for "Qingping Pro AQM" and follow the configuration steps
+5. Search for "Qingping" and follow the configuration steps
 
 ## Configuration
 

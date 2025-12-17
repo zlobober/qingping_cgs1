@@ -537,12 +537,17 @@ async def async_setup_entry(
             
             # IMPORTANT: Prioritize current data based on CMD type
             # CMD 0x41 = current reading (use first/only entry)
-            # CMD 0x42 = historical data (use LAST entry which is most recent)
+            # CMD 0x42 = historical data (use AVG of all entries)
             # CMD 0x43 = real-time data (use first/only entry)
             if cmd == 0x42 and isinstance(sensor_data, list) and len(sensor_data) > 1:
-                # For historical data (CMD 0x42), use the LAST (most recent) reading
-                data = sensor_data[-1]
-                _LOGGER.debug(f"[TLV] CMD 0x42: Using most recent historical data (entry {len(sensor_data)} of {len(sensor_data)})")
+                # For historical data (CMD 0x42), average all numeric fields
+                data = {}
+                numeric_fields = ["temperature", "humidity", "co2", "pm25", "pm10", "tvoc", "noise", "light", "pressure", "battery", "rssi"]
+                for field in numeric_fields:
+                    values = [item[field] for item in sensor_data if isinstance(item, dict) and field in item and isinstance(item[field], (int, float))]
+                    if values:
+                        data[field] = sum(values) / len(values)
+                _LOGGER.debug(f"[TLV] CMD 0x42: Averaged {len(sensor_data)} historical data entries")
             else:
                 # For current/real-time data, use first entry
                 data = sensor_data[0] if isinstance(sensor_data, list) else sensor_data
